@@ -7,7 +7,7 @@
     "trigger-rule": {
       "match": {
         "type": "payload-hmac-sha256",
-        "secret": "{{ getenv \"RINGBACK_HOOK_SECRET\" }}",
+        "secret": "{{ getenv `RINGBACK_HOOK_SECRET` }}",
         "parameter": {
           "source": "header",
           "name": "X-Hub-Signature-256"
