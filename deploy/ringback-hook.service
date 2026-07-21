@@ -1,0 +1,14 @@
+[Unit]
+Description=webhook for deploying ringback
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/ringback/hook.env
+ExecStart=/usr/local/bin/webhook -hooks /opt/ringback/deploy/hooks.json -template -ip 127.0.0.1 -port 9000 -hotreload -verbose
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
