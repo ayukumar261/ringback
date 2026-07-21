@@ -44,5 +44,14 @@ services:
     volumes:
       - ./livekit-sip.yaml:/etc/livekit-sip.yaml:ro
 
+  web:
+    image: ghcr.io/ayukumar261/ringback-web:latest
+    container_name: ringback-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+
 volumes:
   redis-data:
