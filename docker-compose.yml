@@ -1,0 +1,48 @@
+name: ringback
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ringback-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --loglevel warning
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    container_name: ringback-livekit
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  livekit-sip:
+    image: livekit/sip:v1.7.0
+    container_name: ringback-livekit-sip
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - livekit
+    entrypoint: ["livekit-sip", "--config=/etc/livekit-sip.yaml"]
+    environment:
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit-sip.yaml:/etc/livekit-sip.yaml:ro
+
+volumes:
+  redis-data:

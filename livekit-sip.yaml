@@ -1,0 +1,9 @@
+log_level: info
+
+ws_url: ws://127.0.0.1:7880
+
+redis:
+  address: 127.0.0.1:6379
+
+sip_port: 5060
+rtp_port: 10000-20000
