@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
+  Deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
