@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/worker/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "apps/worker/**"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  Worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/worker
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/worker/go.mod
+          cache-dependency-path: apps/worker/go.sum
+
+      - name: Install C libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libopus-dev libopusfile-dev
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
