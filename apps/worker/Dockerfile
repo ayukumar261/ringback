@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# Begin a builder stage from base image
-FROM golang:1.25 AS builder
+# Build on the matching alpine variant so cgo links against musl like the runner
+FROM golang:1.25-alpine3.22 AS builder
+
+# Install the C toolchain plus the opus headers the cgo binding needs
+RUN apk add --no-cache build-base pkgconf opus-dev opusfile-dev
 
 # Set working directory
 WORKDIR /src
@@ -15,14 +18,20 @@ RUN go mod download
 # Copy remaining source
 COPY . .
 
+# Compile every package so leaf packages stay buildable before main imports them
+RUN CGO_ENABLED=1 go build ./...
+
 # Receive the git SHA to stamp into the binary
 ARG GIT_SHA=dev
 
-# Build a static binary with the version stamped in
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GIT_SHA}" -o /out/worker .
+# Build the worker binary with the version stamped in
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=${GIT_SHA}" -o /out/worker .
 
 # Begin a runner stage from base image
 FROM alpine:3.22 AS runner
+
+# Install the shared libraries the cgo binary loads at runtime
+RUN apk add --no-cache opus opusfile
 
 # Copy the compiled binary from the builder stage
 COPY --from=builder /out/worker /usr/local/bin/worker

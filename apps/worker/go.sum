@@ -1,2 +1,4 @@
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
+gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302 h1:xeVptzkP8BuJhoIjNizd2bRHfq9KB9HfOLZu90T04XM=
+gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302/go.mod h1:/L5E7a21VWl8DeuCPKxQBdVG5cy+L0MRZ08B1wnqt7g=
