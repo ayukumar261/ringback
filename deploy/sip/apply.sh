@@ -59,7 +59,8 @@ if [[ -z "$trunk_id" ]]; then
     echo "[sip] created trunk '$TRUNK_NAME' ($trunk_id)"
   fi
 else
-  jq --arg id "$trunk_id" '{sip_trunk_id: $id, replace: .trunk}' "$TRUNK_JSON" \
+  # lk update parses the Info object (ID embedded), not the request wrapper its usage string claims
+  jq --arg id "$trunk_id" '.trunk + {sip_trunk_id: $id}' "$TRUNK_JSON" \
     | send "update trunk $trunk_id" sip inbound update
 fi
 
@@ -71,6 +72,6 @@ if [[ -z "$rule_id" ]]; then
     | send "create rule '$RULE_NAME'" sip dispatch create
 else
   jq --arg id "$rule_id" --arg tid "$trunk_id" \
-    '{sip_dispatch_rule_id: $id, replace: {name: .name, trunk_ids: [$tid], rule: .rule}}' "$RULE_JSON" \
+    '{sip_dispatch_rule_id: $id, name: .name, trunk_ids: [$tid], rule: .rule}' "$RULE_JSON" \
     | send "update rule $rule_id" sip dispatch update
 fi

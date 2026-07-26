@@ -9,8 +9,8 @@ cd /opt/ringback
 # Print a UTC-timestamped "started" line
 echo "[deploy] $(date -u +%FT%TZ) started"
 
-# Retrieve compose and configuration updates
-git pull --ff-only || echo "[deploy] git pull skipped/failed (continuing)"
+# Mirror origin/main exactly; immune to force-pushed history
+git fetch origin && git reset --hard origin/main || echo "[deploy] git sync failed (continuing)"
 
 # Download the latest image tags
 docker compose pull
