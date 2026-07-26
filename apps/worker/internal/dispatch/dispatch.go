@@ -11,12 +11,14 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lkwebhook "github.com/livekit/protocol/webhook"
 
+	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 )
 
 const (
 	defaultRoomPrefix = "call-"
 	defaultMaxCall    = 30 * time.Minute // backstop against sessions no hangup ever ends
+	deleteTimeout     = 5 * time.Second  // cap on the post-session room delete call
 )
 
 // Config tunes one Dispatcher.
@@ -24,15 +26,17 @@ type Config struct {
 	RoomPrefix string                                                              // empty means call-
 	MaxCall    time.Duration                                                       // zero means 30m
 	Run        func(ctx context.Context, roomName string, opts session.Opts) error // nil means session.Run
+	Delete     func(ctx context.Context, roomName string) error                    // nil means LiveKit room deletion
 	Log        *slog.Logger                                                        // nil means slog.Default()
 }
 
-// Dispatcher runs one session per call room and cancels it when the room ends.
+// Dispatcher runs one session per call room and tears the room down when the session ends.
 type Dispatcher struct {
 	opts    session.Opts
 	prefix  string
 	maxCall time.Duration
 	run     func(ctx context.Context, roomName string, opts session.Opts) error
+	delete  func(ctx context.Context, roomName string) error
 	log     *slog.Logger
 
 	mu     sync.Mutex
@@ -51,6 +55,16 @@ func New(opts session.Opts, cfg Config) *Dispatcher {
 	if cfg.Run == nil {
 		cfg.Run = session.Run
 	}
+	if cfg.Delete == nil {
+		cfg.Delete = func(ctx context.Context, roomName string) error {
+			return room.Delete(ctx, room.Opts{
+				URL:       opts.LiveKitURL,
+				APIKey:    opts.LiveKitAPIKey,
+				APISecret: opts.LiveKitAPISecret,
+				RoomName:  roomName,
+			})
+		}
+	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
@@ -59,6 +73,7 @@ func New(opts session.Opts, cfg Config) *Dispatcher {
 		prefix:  cfg.RoomPrefix,
 		maxCall: cfg.MaxCall,
 		run:     cfg.Run,
+		delete:  cfg.Delete,
 		log:     cfg.Log,
 		active:  make(map[string]context.CancelFunc),
 	}
@@ -97,6 +112,11 @@ func (d *Dispatcher) start(roomName string) {
 	go func() {
 		defer d.wg.Done()
 		defer func() {
+			dctx, dcancel := context.WithTimeout(context.Background(), deleteTimeout)
+			if err := d.delete(dctx, roomName); err != nil {
+				d.log.Warn("deleting room after session", "room", roomName, "err", err)
+			}
+			dcancel()
 			d.mu.Lock()
 			delete(d.active, roomName)
 			d.mu.Unlock()

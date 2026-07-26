@@ -137,6 +137,18 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 	return r, nil
 }
 
+// Delete removes opts.RoomName server-side, hanging up anyone still in it.
+func Delete(ctx context.Context, opts Opts) error {
+	if opts.URL == "" || opts.APIKey == "" || opts.APISecret == "" || opts.RoomName == "" {
+		return fmt.Errorf("room: opts need URL, APIKey, APISecret, and RoomName")
+	}
+	client := lksdk.NewRoomServiceClient(opts.URL, opts.APIKey, opts.APISecret)
+	if _, err := client.DeleteRoom(ctx, &livekit.DeleteRoomRequest{Room: opts.RoomName}); err != nil {
+		return fmt.Errorf("room: delete: %w", err)
+	}
+	return nil
+}
+
 // CallerPCM returns decoded caller audio; it closes once the room is torn down.
 func (r *Room) CallerPCM() <-chan []byte { return r.callerPCM }
 

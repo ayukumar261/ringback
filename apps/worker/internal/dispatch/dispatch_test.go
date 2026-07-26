@@ -51,6 +51,9 @@ func waitEmpty(t *testing.T, d *Dispatcher) {
 	}
 }
 
+// nopDelete stands in for room deletion in tests that don't assert on it.
+func nopDelete(context.Context, string) error { return nil }
+
 // blockingRun records each invocation and blocks until its ctx ends.
 type blockingRun struct {
 	calls   atomic.Int32
@@ -72,7 +75,7 @@ func (b *blockingRun) run(ctx context.Context, roomName string, _ session.Opts) 
 
 func TestStartsSessionForCallRoom(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run})
+	d := New(session.Opts{}, Config{Run: b.run, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
 	if room := waitRecv(t, b.started, "session start"); room != "call-abc" {
@@ -89,7 +92,7 @@ func TestStartsSessionForCallRoom(t *testing.T) {
 
 func TestIgnoresOtherRoomsAndEvents(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run})
+	d := New(session.Opts{}, Config{Run: b.run, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "lobby"))
 	d.HandleEvent(event(lkwebhook.EventParticipantJoined, "call-abc"))
@@ -106,7 +109,7 @@ func TestIgnoresOtherRoomsAndEvents(t *testing.T) {
 
 func TestDuplicateStartRunsOnce(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run})
+	d := New(session.Opts{}, Config{Run: b.run, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
@@ -122,7 +125,7 @@ func TestDuplicateStartRunsOnce(t *testing.T) {
 
 func TestRoomCanRunAgainAfterSessionEnds(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run})
+	d := New(session.Opts{}, Config{Run: b.run, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
 	waitRecv(t, b.started, "first session start")
@@ -144,6 +147,7 @@ func TestFailedSessionFreesTheRoom(t *testing.T) {
 			ran <- struct{}{}
 			return fmt.Errorf("boom")
 		},
+		Delete: nopDelete,
 	})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
@@ -156,7 +160,7 @@ func TestFailedSessionFreesTheRoom(t *testing.T) {
 
 func TestMaxCallCancelsStuckSession(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run, MaxCall: 25 * time.Millisecond})
+	d := New(session.Opts{}, Config{Run: b.run, MaxCall: 25 * time.Millisecond, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
 	waitRecv(t, b.started, "session start")
@@ -164,9 +168,44 @@ func TestMaxCallCancelsStuckSession(t *testing.T) {
 	waitEmpty(t, d)
 }
 
+func TestDeletesRoomAfterSessionEnds(t *testing.T) {
+	b := newBlockingRun()
+	deleted := make(chan string, 2)
+	d := New(session.Opts{}, Config{
+		Run:    b.run,
+		Delete: func(_ context.Context, roomName string) error { deleted <- roomName; return nil },
+	})
+
+	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
+	waitRecv(t, b.started, "session start")
+	d.HandleEvent(event(lkwebhook.EventRoomFinished, "call-abc"))
+	waitRecv(t, b.ended, "session end")
+	if room := waitRecv(t, deleted, "room deletion"); room != "call-abc" {
+		t.Fatalf("deleted room %q, want call-abc", room)
+	}
+}
+
+func TestFailedDeleteStillFreesTheRoom(t *testing.T) {
+	ran := make(chan struct{}, 2)
+	d := New(session.Opts{}, Config{
+		Run: func(context.Context, string, session.Opts) error {
+			ran <- struct{}{}
+			return nil
+		},
+		Delete: func(context.Context, string) error { return fmt.Errorf("boom") },
+	})
+
+	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
+	waitRecv(t, ran, "first run")
+	waitEmpty(t, d)
+
+	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
+	waitRecv(t, ran, "run after a failed delete")
+}
+
 func TestDrainCancelsEverySession(t *testing.T) {
 	b := newBlockingRun()
-	d := New(session.Opts{}, Config{Run: b.run})
+	d := New(session.Opts{}, Config{Run: b.run, Delete: nopDelete})
 
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-a"))
 	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-b"))
