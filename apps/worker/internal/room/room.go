@@ -151,6 +151,9 @@ func (r *Room) Enqueue(pcm []byte) {
 // Flush drops all queued agent audio on a barge-in.
 func (r *Room) Flush() { r.buf.Flush() }
 
+// Buffered reports how much queued agent audio has not yet played out.
+func (r *Room) Buffered() time.Duration { return r.buf.Buffered() }
+
 // Done closes when teardown finishes and Err is final.
 func (r *Room) Done() <-chan struct{} { return r.done }
 
