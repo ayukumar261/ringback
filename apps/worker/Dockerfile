@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build on the matching alpine variant so cgo links against musl like the runner
-FROM golang:1.25-alpine3.22 AS builder
+FROM golang:1.26-alpine3.22 AS builder
 
 # Install the C toolchain plus the opus headers the cgo binding needs
 RUN apk add --no-cache build-base pkgconf opus-dev opusfile-dev
