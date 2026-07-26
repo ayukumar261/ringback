@@ -8,3 +8,8 @@ rtc:
 
 redis:
   address: 127.0.0.1:6379
+
+webhook:
+  api_key: APIEPhJuUsEtTZW
+  urls:
+    - http://127.0.0.1:8080/livekit

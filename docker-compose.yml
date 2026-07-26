@@ -44,6 +44,19 @@ services:
     volumes:
       - ./livekit-sip.yaml:/etc/livekit-sip.yaml:ro
 
+  worker:
+    image: ghcr.io/ayukumar261/ringback-worker:latest
+    container_name: ringback-worker
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - livekit
+    env_file:
+      - .env
+    environment:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+    stop_grace_period: 15s
+
   web:
     image: ghcr.io/ayukumar261/ringback-web:latest
     container_name: ringback-web
