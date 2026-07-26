@@ -18,6 +18,9 @@ docker compose pull
 # Recreate any containers that changed
 docker compose up -d
 
+# Converge the live LiveKit SIP config with deploy/sip/
+./deploy/sip/apply.sh
+
 # Delete any untagged images to reclaim disk space
 docker image prune -f
 
