@@ -40,10 +40,10 @@ find_trunk() {
     '.items // [] | map(select(.name == $n)) | .[0].sipTrunkId // empty'
 }
 
-# Wait for the LiveKit API on fresh boots
-for i in {1..10}; do
-  lk sip inbound list --json >/dev/null 2>&1 && break
-  [[ $i -eq 10 ]] && { echo "[sip] LiveKit API unreachable at $LIVEKIT_URL" >&2; exit 1; }
+# Wait for the LiveKit API; deploys briefly peg the 1-vCPU box while containers recreate
+for i in {1..30}; do
+  err=$(lk --silent sip inbound list --json 2>&1 >/dev/null) && break
+  [[ $i -eq 30 ]] && { echo "[sip] LiveKit API not answering at $LIVEKIT_URL: $err" >&2; exit 1; }
   sleep 2
 done
 

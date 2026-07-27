@@ -21,6 +21,9 @@ docker compose up -d
 # Converge the live LiveKit SIP config with deploy/sip/
 ./deploy/sip/apply.sh
 
+# Keep the SIP firewall in lockstep with the trunk's allowed ranges
+./deploy/sip/firewall.sh
+
 # Delete any untagged images to reclaim disk space
 docker image prune -f
 
