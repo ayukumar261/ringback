@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/ringback/deploy/sip/firewall.sh
+ExecStart=/opt/ringback/deploy/host/firewall.sh
 RemainAfterExit=yes
 
 [Install]

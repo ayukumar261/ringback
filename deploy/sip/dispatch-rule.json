@@ -1,6 +1,5 @@
 {
   "name": "inbound-calls",
-  "trunk_ids": ["ST_BxVxLJL3WsYC"],
   "rule": {
     "dispatchRuleIndividual": {
       "roomPrefix": "call-"

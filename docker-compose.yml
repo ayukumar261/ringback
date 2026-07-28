@@ -28,7 +28,7 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - ./deploy/config/livekit.yaml:/etc/livekit.yaml:ro
 
   livekit-sip:
     image: livekit/sip:v1.7.0
@@ -42,7 +42,7 @@ services:
       LIVEKIT_API_KEY: "${LIVEKIT_API_KEY}"
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET}"
     volumes:
-      - ./livekit-sip.yaml:/etc/livekit-sip.yaml:ro
+      - ./deploy/config/livekit-sip.yaml:/etc/livekit-sip.yaml:ro
 
   worker:
     image: ghcr.io/ayukumar261/ringback-worker:latest
