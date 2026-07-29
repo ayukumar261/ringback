@@ -16,6 +16,20 @@ services:
       timeout: 3s
       retries: 5
 
+  mongo:
+    image: mongo:8
+    container_name: ringback-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   livekit:
     image: livekit/livekit-server:v1.13.4
     container_name: ringback-livekit
@@ -68,3 +82,4 @@ services:
 
 volumes:
   redis-data:
+  mongo-data:
