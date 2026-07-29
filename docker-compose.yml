@@ -80,6 +80,23 @@ services:
     env_file:
       - .env
 
+  api:
+    image: ghcr.io/ayukumar261/ringback-api:latest
+    container_name: ringback-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/ringback
+
 volumes:
   redis-data:
   mongo-data:
