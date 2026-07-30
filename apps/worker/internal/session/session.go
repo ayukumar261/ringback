@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 )
 
@@ -19,6 +20,7 @@ type Opts struct {
 	LiveKitAPISecret string
 	EL               *elevenlabs.Client
 	Init             elevenlabs.InitData // per-call overrides, usually zero
+	Events           *events.Publisher   // nil publishes nothing
 	Log              *slog.Logger        // nil means slog.Default()
 }
 
@@ -52,8 +54,22 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	start := time.Now()
 	log = log.With("conversation", conv.Meta().ConversationID)
 	log.Info("session started")
+	from, to := rm.Caller()
+	opts.Events.CallStarted(events.Start{
+		Room:           roomName,
+		ConversationID: conv.Meta().ConversationID,
+		From:           from,
+		To:             to,
+		At:             start,
+	})
 	err = bridge(ctx, rm, conv, log)
-	log.Info("session ended", "duration", time.Since(start).Round(time.Millisecond), "err", err)
+	elapsed := time.Since(start)
+	log.Info("session ended", "duration", elapsed.Round(time.Millisecond), "err", err)
+	opts.Events.CallEnded(events.End{
+		Room:     roomName,
+		At:       time.Now(),
+		Duration: elapsed,
+	})
 	return err
 }
 

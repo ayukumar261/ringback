@@ -152,6 +152,18 @@ func Delete(ctx context.Context, opts Opts) error {
 // CallerPCM returns decoded caller audio; it closes once the room is torn down.
 func (r *Room) CallerPCM() <-chan []byte { return r.callerPCM }
 
+// Caller reports the SIP participant's caller and dialed numbers, empty until one is visible.
+func (r *Room) Caller() (from, to string) {
+	for _, rp := range r.room.GetRemoteParticipants() {
+		attrs := rp.Attributes()
+		if attrs["sip.callID"] == "" {
+			continue
+		}
+		return attrs["sip.phoneNumber"], attrs["sip.trunkPhoneNumber"]
+	}
+	return "", ""
+}
+
 // Enqueue queues agent PCM for paced playout to the caller.
 func (r *Room) Enqueue(pcm []byte) {
 	if r.ctx.Err() != nil {
