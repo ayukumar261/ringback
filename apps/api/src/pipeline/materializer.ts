@@ -17,13 +17,13 @@ const BATCH = 64;
 const BLOCK_MS = 5000;
 
 // Entry is one stream entry as delivered by XREADGROUP.
-interface Entry {
+export interface Entry {
   id: string;
   fields: ReadonlyArray<string> | null; // null when trimmed away while pending
 }
 
 // toEntries flattens one XREADGROUP reply into entries for our single stream.
-const toEntries = (reply: unknown): Entry[] => {
+export const toEntries = (reply: unknown): Entry[] => {
   if (!reply) {
     return [];
   }

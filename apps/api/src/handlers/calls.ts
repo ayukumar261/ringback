@@ -16,11 +16,11 @@ const KEEPALIVE_EVERY = "15 seconds";
 const ENTRY_ID = /^\d+-\d+$/;
 
 // frame renders one event as an SSE message addressed by its stream entry id.
-const frame = (e: FeedEvent): string =>
+export const frame = (e: FeedEvent): string =>
   `id: ${e.id}\nevent: ${e.event.event}\ndata: ${JSON.stringify(e.event)}\n\n`;
 
 // isAfter reports whether stream entry id a is newer than b.
-const isAfter = (a: string, b: string): boolean => {
+export const isAfter = (a: string, b: string): boolean => {
   const [ams = 0, aseq = 0] = a.split("-").map(Number);
   const [bms = 0, bseq = 0] = b.split("-").map(Number);
   return ams === bms ? aseq > bseq : ams > bms;
@@ -47,7 +47,7 @@ const replayAfter = (redis: Redis, lastId: string) =>
   });
 
 // events replays anything past lastEventId, then follows the live feed.
-const events = (
+export const events = (
   redis: Redis,
   feed: CallFeed,
   lastEventId: string | undefined,
@@ -70,10 +70,7 @@ const events = (
           : Stream.fromQueue(sub).pipe(
               Stream.filter((e) => isAfter(e.id, cutoff)),
             );
-      return Stream.fromIterable(replay).pipe(
-        Stream.concat(live),
-        Stream.map(frame),
-      );
+      return Stream.fromIterable(replay).pipe(Stream.concat(live));
     }),
   );
 
@@ -88,6 +85,7 @@ export const feed = Effect.gen(function* () {
   const body = Stream.succeed(PREAMBLE).pipe(
     Stream.concat(
       events(redis, feed, request.headers["last-event-id"]).pipe(
+        Stream.map(frame),
         Stream.merge(keepalives),
       ),
     ),
