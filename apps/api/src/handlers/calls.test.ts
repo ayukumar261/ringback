@@ -1,9 +1,11 @@
+import { HttpServerResponse } from "@effect/platform";
 import { Chunk, Effect, Fiber, PubSub, Stream } from "effect";
 import type { Redis } from "ioredis";
 import { describe, expect, it } from "vitest";
+import { type CallDoc, MongoClient } from "../clients/mongo.js";
 import type { CallEvent } from "../events/index.js";
 import { CallFeed } from "../pipeline/feed.js";
-import { events, frame, isAfter } from "./calls.js";
+import { callsSnapshot, events, frame, isAfter, listCalls } from "./calls.js";
 
 // started/ended build decoded events as the materializer would publish them.
 const started = (room: string, at: number): CallEvent => ({
@@ -158,5 +160,136 @@ describe("frame", () => {
     expect(frame({ id: "1-1", event: started("a", 5) })).toBe(
       'id: 1-1\nevent: call.started\ndata: {"event":"call.started","room":"a","started_at":5}\n\n',
     );
+  });
+});
+
+// fakeMongo yields the given docs (or failure) and records each find call.
+const fakeMongo = (result: CallDoc[] | Error) => {
+  const finds: unknown[] = [];
+  const mongo = {
+    calls: {
+      find: (filter: unknown, options: unknown) => {
+        finds.push({ filter, options });
+        return {
+          toArray: () =>
+            result instanceof Error
+              ? Promise.reject(result)
+              : Promise.resolve(result),
+        };
+      },
+    },
+  } as unknown as MongoClient;
+  return { mongo, finds };
+};
+
+const activeDoc: CallDoc = {
+  room: "r-a",
+  status: "active",
+  conversationId: "conv-1",
+  from: "+15550001111",
+  to: "+15550002222",
+  startedAt: new Date(1000),
+};
+
+const endedDoc: CallDoc = {
+  room: "r-b",
+  status: "ended",
+  conversationId: "conv-2",
+  from: "+15550003333",
+  to: "+15550004444",
+  startedAt: new Date(2000),
+  endedAt: new Date(62000),
+  durationMs: 60000,
+};
+
+describe("listCalls", () => {
+  it("encodes docs into the SSE wire dialect", async () => {
+    const { mongo } = fakeMongo([endedDoc, activeDoc]);
+    const out = await Effect.runPromise(listCalls(mongo));
+    expect(out).toEqual([
+      {
+        room: "r-b",
+        status: "ended",
+        conversation_id: "conv-2",
+        from: "+15550003333",
+        to: "+15550004444",
+        started_at: 2000,
+        ended_at: 62000,
+        duration_ms: 60000,
+      },
+      {
+        room: "r-a",
+        status: "active",
+        conversation_id: "conv-1",
+        from: "+15550001111",
+        to: "+15550002222",
+        started_at: 1000,
+      },
+    ]);
+  });
+
+  it("omits absent optional fields", async () => {
+    const { mongo } = fakeMongo([
+      {
+        room: "r-x",
+        status: "ended",
+        endedAt: new Date(5000),
+        durationMs: 100,
+      },
+    ]);
+    const out = await Effect.runPromise(listCalls(mongo));
+    expect(Object.keys(out[0] ?? {}).sort()).toEqual([
+      "duration_ms",
+      "ended_at",
+      "room",
+      "status",
+    ]);
+  });
+
+  it("asks Mongo for the newest calls, capped, without _id", async () => {
+    const { mongo, finds } = fakeMongo([]);
+    await Effect.runPromise(listCalls(mongo));
+    expect(finds).toEqual([
+      {
+        filter: {},
+        options: {
+          projection: { _id: 0 },
+          sort: { startedAt: -1 },
+          limit: 100,
+        },
+      },
+    ]);
+  });
+
+  it("returns an empty array for an empty collection", async () => {
+    const { mongo } = fakeMongo([]);
+    expect(await Effect.runPromise(listCalls(mongo))).toEqual([]);
+  });
+});
+
+describe("callsSnapshot", () => {
+  const run = (result: CallDoc[] | Error) =>
+    Effect.runPromise(
+      callsSnapshot.pipe(
+        Effect.provideService(MongoClient, fakeMongo(result).mongo),
+      ),
+    );
+
+  it("responds 200 on success", async () => {
+    const response = await run([activeDoc]);
+    expect(response.status).toBe(200);
+  });
+
+  it("responds 500 when Mongo fails", async () => {
+    const response = await run(new Error("mongo down"));
+    expect(response.status).toBe(500);
+    expect(await HttpServerResponse.toWeb(response).json()).toEqual({
+      error: "internal",
+    });
+  });
+
+  it("responds 500 on an undecodable doc", async () => {
+    const response = await run([{ room: "r-x", status: "weird" as never }]);
+    expect(response.status).toBe(500);
   });
 });

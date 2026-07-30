@@ -1,8 +1,9 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
-import { Effect, PubSub, Schedule, Stream } from "effect";
+import { Effect, PubSub, Schedule, Schema, Stream } from "effect";
 import type { Redis } from "ioredis";
 import { CallStream, decodeCallEvent, entryFields } from "../events/index.js";
 import { CallFeed, type FeedEvent } from "../pipeline/feed.js";
+import { MongoClient } from "../clients/mongo.js";
 import { RedisClient } from "../clients/redis.js";
 
 // PREAMBLE flushes headers right away and tunes EventSource's reconnect delay.
@@ -74,8 +75,8 @@ export const events = (
     }),
   );
 
-// feed streams call lifecycle events, resuming from Last-Event-ID on reconnect.
-export const feed = Effect.gen(function* () {
+// callsFeed streams call lifecycle events, resuming from Last-Event-ID on reconnect.
+export const callsFeed = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const redis = yield* RedisClient;
   const feed = yield* CallFeed;
@@ -98,3 +99,60 @@ export const feed = Effect.gen(function* () {
     },
   });
 });
+
+// SNAPSHOT_LIMIT caps GET /calls at the newest calls by started_at.
+const SNAPSHOT_LIMIT = 100;
+
+// CallSnapshot encodes a CallDoc into the SSE wire dialect: snake_case, unix-ms.
+export const CallSnapshot = Schema.Struct({
+  room: Schema.String,
+  status: Schema.Literal("active", "ended"),
+  conversationId: Schema.optional(Schema.String).pipe(
+    Schema.fromKey("conversation_id"),
+  ),
+  from: Schema.optional(Schema.String),
+  to: Schema.optional(Schema.String),
+  startedAt: Schema.optional(Schema.DateFromNumber).pipe(
+    Schema.fromKey("started_at"),
+  ),
+  endedAt: Schema.optional(Schema.DateFromNumber).pipe(
+    Schema.fromKey("ended_at"),
+  ),
+  durationMs: Schema.optional(Schema.Number).pipe(
+    Schema.fromKey("duration_ms"),
+  ),
+});
+
+const encodeSnapshots = Schema.encode(Schema.Array(CallSnapshot));
+
+// listCalls reads the newest calls and encodes them for the wire.
+export const listCalls = (mongo: MongoClient) =>
+  Effect.gen(function* () {
+    const docs = yield* Effect.tryPromise(() =>
+      mongo.calls
+        .find(
+          {},
+          {
+            projection: { _id: 0 },
+            sort: { startedAt: -1 },
+            limit: SNAPSHOT_LIMIT,
+          },
+        )
+        .toArray(),
+    );
+    return yield* encodeSnapshots(docs);
+  });
+
+// callsSnapshot serves GET /calls: a point-in-time snapshot of the calls collection.
+export const callsSnapshot = Effect.gen(function* () {
+  const mongo = yield* MongoClient;
+  return yield* HttpServerResponse.json(yield* listCalls(mongo));
+}).pipe(
+  Effect.catchAll((error) =>
+    Effect.logError("calls: snapshot failed", error).pipe(
+      Effect.zipRight(
+        HttpServerResponse.json({ error: "internal" }, { status: 500 }),
+      ),
+    ),
+  ),
+);
