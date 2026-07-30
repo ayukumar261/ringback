@@ -1,3 +1,13 @@
 ringback.ayukumar261.com {
-	reverse_proxy 127.0.0.1:9000
+	handle /hooks/* {
+		reverse_proxy 127.0.0.1:9000
+	}
+
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
 }

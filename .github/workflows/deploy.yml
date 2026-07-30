@@ -35,6 +35,8 @@ jobs:
           context: .
           file: apps/web/Dockerfile
           push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
           tags: |
             ghcr.io/ayukumar261/ringback-web:latest
             ghcr.io/ayukumar261/ringback-web:${{ github.sha }}

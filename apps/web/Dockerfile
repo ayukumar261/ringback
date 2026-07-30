@@ -27,6 +27,10 @@ WORKDIR /app
 COPY --from=deps /app ./
 COPY . .
 
+# Bake the browser-visible api origin into the client bundle
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 # Build filtered workspace package
 RUN pnpm --filter web build
 
