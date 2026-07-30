@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/livekit/protocol/auth"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/dispatch"
 	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 	"github.com/ayukumar261/ringback/apps/worker/internal/webhook"
 )
@@ -36,11 +38,31 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var rdb *redis.Client
+	var pub *events.Publisher
+	if redisURL := os.Getenv("REDIS_URL"); redisURL == "" {
+		log.Warn("REDIS_URL not set; call events will not be published")
+	} else {
+		ropts, err := redis.ParseURL(redisURL)
+		if err != nil {
+			log.Error("invalid REDIS_URL", "err", err)
+			os.Exit(1)
+		}
+		rdb = redis.NewClient(ropts)
+		pctx, pcancel := context.WithTimeout(ctx, 3*time.Second)
+		if err := rdb.Ping(pctx).Err(); err != nil {
+			log.Warn("redis unreachable; call events will drop until it recovers", "err", err)
+		}
+		pcancel()
+		pub = events.New(rdb, log)
+	}
+
 	d := dispatch.New(session.Opts{
 		LiveKitURL:       lkURL,
 		LiveKitAPIKey:    lkKey,
 		LiveKitAPISecret: lkSecret,
 		EL:               &elevenlabs.Client{APIKey: elKey, AgentID: elAgent},
+		Events:           pub,
 		Log:              log,
 	}, dispatch.Config{Log: log})
 
@@ -67,6 +89,11 @@ func main() {
 		failed = true
 	}
 	d.Drain(shutdownCtx)
+	if rdb != nil {
+		if err := rdb.Close(); err != nil {
+			log.Warn("closing redis", "err", err)
+		}
+	}
 
 	if failed {
 		os.Exit(1)

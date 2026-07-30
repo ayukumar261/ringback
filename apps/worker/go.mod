@@ -9,6 +9,7 @@ require (
 	github.com/livekit/server-sdk-go/v2 v2.18.1
 	github.com/pion/rtp v1.10.2
 	github.com/pion/webrtc/v4 v4.2.15
+	github.com/redis/go-redis/v9 v9.20.0
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 )
 
@@ -65,7 +66,6 @@ require (
 	github.com/prometheus/common v0.68.1 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
-	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	github.com/twitchtv/twirp v8.1.3+incompatible // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
