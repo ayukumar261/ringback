@@ -1,11 +1,14 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, PubSub } from "effect";
 import type { Redis } from "ioredis";
-import { applyCallEvent, decodeCallEvent, entryFields } from "./events/index.js";
-import { MongoClient } from "./clients/mongo.js";
-import { RedisClient } from "./clients/redis.js";
-
-// Stream is the Redis stream key the worker publishes call events to.
-export const Stream = "ringback:calls";
+import {
+  applyCallEvent,
+  CallStream,
+  decodeCallEvent,
+  entryFields,
+} from "../events/index.js";
+import { CallFeed } from "./feed.js";
+import { MongoClient } from "../clients/mongo.js";
+import { RedisClient } from "../clients/redis.js";
 
 const GROUP = "materializer";
 const CONSUMER = "api";
@@ -39,7 +42,7 @@ const toEntries = (reply: unknown): Entry[] => {
 // ensureGroup creates the consumer group from the stream's start, tolerating reruns.
 const ensureGroup = (redis: Redis) =>
   Effect.tryPromise(() =>
-    redis.xgroup("CREATE", Stream, GROUP, "0", "MKSTREAM"),
+    redis.xgroup("CREATE", CallStream, GROUP, "0", "MKSTREAM"),
   ).pipe(
     Effect.catchAll((e) =>
       `${e.message} ${String(e.cause)}`.includes("BUSYGROUP")
@@ -48,10 +51,11 @@ const ensureGroup = (redis: Redis) =>
     ),
   );
 
-// processEntries applies a batch, records the cursor, then acks — in that order.
+// processEntries applies a batch, fans it out, records the cursor, then acks — in that order.
 const processEntries = (
   mongo: MongoClient,
   redis: Redis,
+  feed: CallFeed,
   entries: ReadonlyArray<Entry>,
 ) =>
   Effect.gen(function* () {
@@ -73,6 +77,7 @@ const processEntries = (
         continue;
       }
       yield* applyCallEvent(mongo, decoded.right);
+      yield* PubSub.publish(feed, { id: entry.id, event: decoded.right });
     }
     yield* Effect.tryPromise(() =>
       mongo.meta.updateOne(
@@ -82,12 +87,12 @@ const processEntries = (
       ),
     );
     yield* Effect.tryPromise(() =>
-      redis.xack(Stream, GROUP, ...entries.map((e) => e.id)),
+      redis.xack(CallStream, GROUP, ...entries.map((e) => e.id)),
     );
   });
 
 // recoverPending replays entries delivered to us but never acked before a crash.
-const recoverPending = (mongo: MongoClient, redis: Redis) =>
+const recoverPending = (mongo: MongoClient, redis: Redis, feed: CallFeed) =>
   Effect.gen(function* () {
     for (;;) {
       const entries = toEntries(
@@ -99,7 +104,7 @@ const recoverPending = (mongo: MongoClient, redis: Redis) =>
             "COUNT",
             BATCH,
             "STREAMS",
-            Stream,
+            CallStream,
             "0",
           ),
         ),
@@ -110,7 +115,7 @@ const recoverPending = (mongo: MongoClient, redis: Redis) =>
       yield* Effect.logInfo(
         `materializer: recovering ${entries.length} pending entries`,
       );
-      yield* processEntries(mongo, redis, entries);
+      yield* processEntries(mongo, redis, feed, entries);
     }
   });
 
@@ -126,7 +131,7 @@ const readBatch = (redis: Redis) =>
       "BLOCK",
       BLOCK_MS,
       "STREAMS",
-      Stream,
+      CallStream,
       ">",
     ),
   ).pipe(Effect.map(toEntries));
@@ -136,17 +141,19 @@ export const MaterializerLive = Layer.scopedDiscard(
   Effect.gen(function* () {
     const base = yield* RedisClient;
     const mongo = yield* MongoClient;
-    // own connection: XREADGROUP BLOCK would starve any other user of the shared one
+    const feed = yield* CallFeed;
     const redis = yield* Effect.acquireRelease(
       Effect.sync(() => base.duplicate()),
       (r) => Effect.sync(() => r.disconnect()),
     );
     const run = Effect.gen(function* () {
       yield* ensureGroup(redis);
-      yield* recoverPending(mongo, redis);
+      yield* recoverPending(mongo, redis, feed);
       yield* Effect.forever(
         readBatch(redis).pipe(
-          Effect.flatMap((entries) => processEntries(mongo, redis, entries)),
+          Effect.flatMap((entries) =>
+            processEntries(mongo, redis, feed, entries),
+          ),
         ),
       );
     });

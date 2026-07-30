@@ -5,6 +5,9 @@ import { applyCallStarted, CallStarted } from "./call-started.js";
 
 export { CallEnded, CallStarted };
 
+// CallStream is the Redis stream key the worker publishes call events to.
+export const CallStream = "ringback:calls";
+
 // CallEvent is every event the worker publishes today.
 export const CallEvent = Schema.Union(CallStarted, CallEnded);
 export type CallEvent = typeof CallEvent.Type;

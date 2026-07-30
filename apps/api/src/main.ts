@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { HttpMiddleware, HttpServer } from "@effect/platform";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Layer } from "effect";
-import { MaterializerLive } from "./materializer.js";
+import { CallFeed } from "./pipeline/feed.js";
+import { MaterializerLive } from "./pipeline/materializer.js";
 import { MongoClient } from "./clients/mongo.js";
 import { RedisClient } from "./clients/redis.js";
 import { router } from "./router.js";
@@ -18,7 +19,9 @@ const HttpLive = router.pipe(
 );
 
 const AppLive = Layer.mergeAll(HttpLive, MaterializerLive).pipe(
-  Layer.provide(Layer.mergeAll(RedisClient.Default, MongoClient.Default)),
+  Layer.provide(
+    Layer.mergeAll(RedisClient.Default, MongoClient.Default, CallFeed.Default),
+  ),
 );
 
 NodeRuntime.runMain(Layer.launch(AppLive));
