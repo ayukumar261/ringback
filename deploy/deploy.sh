@@ -77,7 +77,7 @@ sip_converge() {
 echo "[deploy] $(date -u +%FT%TZ) started"
 
 # Mirror origin/main exactly, then re-exec the freshly synced script so this
-# run uses the new deploy logic; immune to force-pushed history
+# run uses the new deploy logic
 if [[ "${1:-}" != "--synced" ]]; then
   git fetch origin && git reset --hard origin/main || echo "[deploy] git sync failed (continuing)"
   exec ./deploy/deploy.sh --synced
@@ -95,15 +95,16 @@ sip_converge
 # Keep the SIP firewall in lockstep with the trunk's allowed ranges
 ./deploy/host/firewall.sh
 
-# Converge the host Caddy config with deploy/host/, reloading only on change
-if ! cmp -s deploy/host/Caddyfile /etc/caddy/Caddyfile; then
-  if caddy validate --config deploy/host/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-    install -m 644 deploy/host/Caddyfile /etc/caddy/Caddyfile
-    systemctl reload caddy
-    echo "[caddy] config updated and reloaded"
-  else
-    echo "[caddy] invalid Caddyfile, keeping current config" >&2
-  fi
+# Converge the host Caddy config with deploy/host/
+if ! command -v caddy >/dev/null; then
+  echo "[caddy] caddy binary not found, skipping convergence" >&2
+elif caddy validate --config deploy/host/Caddyfile --adapter caddyfile; then
+  cmp -s deploy/host/Caddyfile /etc/caddy/Caddyfile \
+    || install -m 644 deploy/host/Caddyfile /etc/caddy/Caddyfile
+  systemctl reload caddy
+  echo "[caddy] config validated and reloaded"
+else
+  echo "[caddy] invalid Caddyfile, keeping current config" >&2
 fi
 
 # Delete any untagged images to reclaim disk space
