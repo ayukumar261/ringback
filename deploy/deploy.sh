@@ -6,6 +6,9 @@ set -euo pipefail
 # Switch to deployment directory
 cd /opt/ringback
 
+# LiveKit CLI needs $HOME set
+export HOME="${HOME:-/root}"
+
 # Desired-state SIP data; the names inside are the identity anchor for convergence
 TRUNK_JSON=deploy/sip/inbound-trunk.json
 RULE_JSON=deploy/sip/dispatch-rule.json
