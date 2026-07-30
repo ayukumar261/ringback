@@ -69,6 +69,7 @@ services:
       - .env
     environment:
       LIVEKIT_URL: ws://127.0.0.1:7880
+      REDIS_URL: redis://127.0.0.1:6379
     stop_grace_period: 15s
 
   web:
