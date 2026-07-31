@@ -34,6 +34,21 @@ type End struct {
 	Duration time.Duration
 }
 
+// Turn roles.
+const (
+	RoleCaller = "caller"
+	RoleAgent  = "agent"
+)
+
+// Turn is one utterance in a call's transcript.
+type Turn struct {
+	Room string
+	Seq  int    // 1-based position within the call; a repeated Seq corrects earlier text
+	Role string // RoleCaller or RoleAgent
+	Text string
+	At   time.Time
+}
+
 // xadder is the one Redis command the publisher needs.
 type xadder interface {
 	XAdd(ctx context.Context, a *redis.XAddArgs) *redis.StringCmd
@@ -65,6 +80,21 @@ func (p *Publisher) CallStarted(s Start) {
 		"from":            s.From,
 		"to":              s.To,
 		"started_at":      strconv.FormatInt(s.At.UnixMilli(), 10),
+	})
+}
+
+// CallTurn announces one transcript turn.
+func (p *Publisher) CallTurn(t Turn) {
+	if p == nil {
+		return
+	}
+	p.publish(map[string]any{
+		"event": "call.turn",
+		"room":  t.Room,
+		"seq":   strconv.Itoa(t.Seq),
+		"role":  t.Role,
+		"text":  t.Text,
+		"at":    strconv.FormatInt(t.At.UnixMilli(), 10),
 	})
 }
 

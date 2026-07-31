@@ -86,9 +86,36 @@ func TestCallEndedValues(t *testing.T) {
 	}
 }
 
+func TestCallTurnValues(t *testing.T) {
+	fake := &fakeXAdder{}
+	p := New(fake, nil)
+
+	at := time.UnixMilli(1753795210789)
+	p.CallTurn(Turn{Room: "call-a", Seq: 3, Role: RoleAgent, Text: "How can I help?", At: at})
+
+	values := fake.args[0].Values.(map[string]any)
+	want := map[string]any{
+		"event": "call.turn",
+		"room":  "call-a",
+		"seq":   "3",
+		"role":  "agent",
+		"text":  "How can I help?",
+		"at":    "1753795210789",
+	}
+	for k, v := range want {
+		if values[k] != v {
+			t.Errorf("values[%q] = %v, want %v", k, values[k], v)
+		}
+	}
+	if len(values) != len(want) {
+		t.Errorf("values has %d fields, want %d", len(values), len(want))
+	}
+}
+
 func TestNilPublisherPublishesNothing(t *testing.T) {
 	var p *Publisher
 	p.CallStarted(Start{Room: "call-a"})
+	p.CallTurn(Turn{Room: "call-a", Seq: 1})
 	p.CallEnded(End{Room: "call-a"})
 }
 

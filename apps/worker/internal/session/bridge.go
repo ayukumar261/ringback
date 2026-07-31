@@ -39,7 +39,7 @@ type convHandle interface {
 }
 
 // bridge pumps audio both ways and tears both sides down when either ends.
-func bridge(ctx context.Context, rm roomHandle, conv convHandle, log *slog.Logger) error {
+func bridge(ctx context.Context, rm roomHandle, conv convHandle, turns *turnLog, log *slog.Logger) error {
 	// The room dying must unblock the event pump below.
 	watchDone := make(chan struct{})
 	go func() {
@@ -59,7 +59,7 @@ func bridge(ctx context.Context, rm roomHandle, conv convHandle, log *slog.Logge
 		}
 	}()
 
-	clientErr := downlink(conv.Events(), rm, log)
+	clientErr := downlink(conv.Events(), rm, turns, log)
 	if clientErr != nil {
 		conv.Close()
 	}
@@ -96,7 +96,7 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 }
 
 // downlink applies agent events to the room until the events close or a fatal server error.
-func downlink(events <-chan elevenlabs.Event, rm roomHandle, log *slog.Logger) error {
+func downlink(events <-chan elevenlabs.Event, rm roomHandle, turns *turnLog, log *slog.Logger) error {
 	for ev := range events {
 		switch e := ev.(type) {
 		case elevenlabs.AudioEvent:
@@ -105,10 +105,13 @@ func downlink(events <-chan elevenlabs.Event, rm roomHandle, log *slog.Logger) e
 			rm.Flush()
 			log.Info("caller barge-in", "event_id", e.EventID)
 		case elevenlabs.UserTranscript:
+			turns.caller(e.Text)
 			log.Info("caller said", "text", e.Text)
 		case elevenlabs.AgentResponse:
+			turns.agent(e.Text)
 			log.Info("agent said", "text", e.Text)
 		case elevenlabs.AgentResponseCorrection:
+			turns.correct(e.Corrected)
 			log.Info("agent cut off", "corrected", e.Corrected)
 		case elevenlabs.ClientError:
 			return fmt.Errorf("session: agent error: %s: %s", e.ErrorName, e.Message)

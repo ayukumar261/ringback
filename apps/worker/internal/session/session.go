@@ -62,7 +62,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		To:             to,
 		At:             start,
 	})
-	err = bridge(ctx, rm, conv, log)
+	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), log)
 	elapsed := time.Since(start)
 	log.Info("session ended", "duration", elapsed.Round(time.Millisecond), "err", err)
 	opts.Events.CallEnded(events.End{

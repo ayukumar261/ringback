@@ -2,14 +2,15 @@ import { Schema } from "effect";
 import type { MongoClient } from "../clients/mongo.js";
 import { applyCallEnded, CallEnded } from "./call-ended.js";
 import { applyCallStarted, CallStarted } from "./call-started.js";
+import { applyCallTurn, CallTurn } from "./call-turn.js";
 
-export { CallEnded, CallStarted };
+export { CallEnded, CallStarted, CallTurn };
 
 // CallStream is the Redis stream key the worker publishes call events to.
 export const CallStream = "ringback:calls";
 
 // CallEvent is every event the worker publishes today.
-export const CallEvent = Schema.Union(CallStarted, CallEnded);
+export const CallEvent = Schema.Union(CallStarted, CallTurn, CallEnded);
 export type CallEvent = typeof CallEvent.Type;
 
 // decodeCallEvent parses one stream entry's fields into a CallEvent.
@@ -20,6 +21,8 @@ export const applyCallEvent = (mongo: MongoClient, ev: CallEvent) => {
   switch (ev.event) {
     case "call.started":
       return applyCallStarted(mongo, ev);
+    case "call.turn":
+      return applyCallTurn(mongo, ev);
     case "call.ended":
       return applyCallEnded(mongo, ev);
   }

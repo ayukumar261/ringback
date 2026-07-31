@@ -56,6 +56,49 @@ describe("decodeCallEvent", () => {
     });
   });
 
+  it("decodes call.turn, parsing seq and timestamp", () => {
+    const ev = decode({
+      event: "call.turn",
+      room: "r1",
+      seq: "3",
+      role: "agent",
+      text: "How can I help?",
+      at: "1722300030000",
+    });
+    expect(Either.getOrThrow(ev)).toEqual({
+      event: "call.turn",
+      room: "r1",
+      seq: 3,
+      role: "agent",
+      text: "How can I help?",
+      at: 1722300030000,
+    });
+  });
+
+  it("rejects a call.turn with an unknown role", () => {
+    const ev = decode({
+      event: "call.turn",
+      room: "r1",
+      seq: "1",
+      role: "operator",
+      text: "hi",
+      at: "1",
+    });
+    expect(Either.isLeft(ev)).toBe(true);
+  });
+
+  it("rejects a call.turn with a non-numeric seq", () => {
+    const ev = decode({
+      event: "call.turn",
+      room: "r1",
+      seq: "first",
+      role: "caller",
+      text: "hi",
+      at: "1",
+    });
+    expect(Either.isLeft(ev)).toBe(true);
+  });
+
   it("decodes call.ended, parsing timestamp and duration", () => {
     const ev = decode({
       event: "call.ended",

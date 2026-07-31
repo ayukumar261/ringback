@@ -13,6 +13,15 @@ export interface CallDoc {
   durationMs?: number;
 }
 
+// TurnDoc is one transcript turn, unique per (room, seq).
+export interface TurnDoc {
+  room: string;
+  seq: number;
+  role: "caller" | "agent";
+  text: string;
+  at: Date;
+}
+
 // MetaDoc keys small pieces of consumer state by name.
 export interface MetaDoc {
   _id: string;
@@ -33,14 +42,16 @@ export class MongoClient extends Effect.Service<MongoClient>()(
       );
       const db = client.db();
       const calls = db.collection<CallDoc>("calls");
+      const turns = db.collection<TurnDoc>("turns");
       const meta = db.collection<MetaDoc>("meta");
       yield* Effect.tryPromise(() =>
         Promise.all([
           calls.createIndex({ room: 1 }, { unique: true }),
           calls.createIndex({ status: 1, startedAt: -1 }),
+          turns.createIndex({ room: 1, seq: 1 }, { unique: true }),
         ]),
       );
-      return { calls, meta } as const;
+      return { calls, turns, meta } as const;
     }),
   },
 ) {}

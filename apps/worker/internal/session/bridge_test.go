@@ -16,10 +16,16 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 )
 
 // discard is a logger for paths whose output the tests do not assert on.
 var discard = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+// discardTurns is a turnLog for tests that do not assert on the transcript.
+func discardTurns() *turnLog {
+	return newTurnLog("room", func(events.Turn) {})
+}
 
 // fakeRoom is a scriptable roomHandle that records operations in order.
 type fakeRoom struct {
@@ -177,7 +183,7 @@ func (f *fakeConv) isClosed() bool {
 func runBridge(t *testing.T, ctx context.Context, rm *fakeRoom, conv *fakeConv) error {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { done <- bridge(ctx, rm, conv, discard) }()
+	go func() { done <- bridge(ctx, rm, conv, discardTurns(), discard) }()
 	select {
 	case err := <-done:
 		return err
@@ -207,7 +213,7 @@ func TestBridgeForwardsCallerAudio(t *testing.T) {
 		rm.pcm <- fr
 	}
 	done := make(chan error, 1)
-	go func() { done <- bridge(context.Background(), rm, conv, discard) }()
+	go func() { done <- bridge(context.Background(), rm, conv, discardTurns(), discard) }()
 	waitFor(t, func() bool { return len(conv.sent()) == len(frames) })
 	rm.kill(nil)
 	select {
@@ -245,6 +251,28 @@ func TestBridgeEnqueueFlushOrder(t *testing.T) {
 	want := []string{"enqueue:a", "enqueue:b", "flush", "enqueue:c", "close"}
 	if !slices.Equal(ops, want) {
 		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+}
+
+func TestDownlinkRecordsTurns(t *testing.T) {
+	rm := newFakeRoom()
+	ch := make(chan elevenlabs.Event, 4)
+	ch <- elevenlabs.AgentResponse{Text: "Hello, how can I help?"}
+	ch <- elevenlabs.UserTranscript{Text: "What are your hours?"}
+	ch <- elevenlabs.AgentResponseCorrection{Original: "Hello, how can I help?", Corrected: "Hello, how-"}
+	close(ch)
+
+	turns, got := newTestTurnLog("call-a")
+	if err := downlink(ch, rm, turns, discard); err != nil {
+		t.Fatalf("downlink = %v", err)
+	}
+	want := []events.Turn{
+		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Hello, how can I help?", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 2, Role: events.RoleCaller, Text: "What are your hours?", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Hello, how-", At: time.UnixMilli(1753795200000)},
+	}
+	if !slices.Equal(*got, want) {
+		t.Fatalf("turns = %v, want %v", *got, want)
 	}
 }
 
@@ -356,7 +384,7 @@ func TestBridgeCtxCancel(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- bridge(ctx, rm, conv, discard) }()
+	go func() { done <- bridge(ctx, rm, conv, discardTurns(), discard) }()
 	cancel()
 	// The real room and conversation die on their own when ctx ends.
 	rm.kill(context.Canceled)

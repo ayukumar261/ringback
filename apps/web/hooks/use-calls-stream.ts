@@ -5,13 +5,23 @@ import useSWRSubscription, {
   type SWRSubscriptionOptions,
 } from "swr/subscription"
 
-import { API_URL, CALL_EVENTS_KEY, CALLS_KEY } from "@/lib/api/config"
-import type { Call, CallEvent } from "@/lib/api/types"
+import { API_URL, CALL_EVENTS_KEY, CALLS_KEY, turnsKey } from "@/lib/api/config"
+import type {
+  Call,
+  CallEndedEvent,
+  CallEvent,
+  CallStartedEvent,
+  CallTurnEvent,
+  Turn,
+} from "@/lib/api/types"
 
 const byStartedAtDesc = (a: Call, b: Call) =>
   (b.started_at ?? -1) - (a.started_at ?? -1)
 
-function applyEvent(calls: readonly Call[] | undefined, event: CallEvent): Call[] {
+function applyEvent(
+  calls: readonly Call[] | undefined,
+  event: CallStartedEvent | CallEndedEvent
+): Call[] {
   const prev = calls ?? []
   const existing = prev.find((c) => c.room === event.room)
   const next: Call =
@@ -38,6 +48,23 @@ function applyEvent(calls: readonly Call[] | undefined, event: CallEvent): Call[
   )
 }
 
+function applyTurn(
+  turns: readonly Turn[] | undefined,
+  event: CallTurnEvent
+): Turn[] {
+  const turn: Turn = {
+    room: event.room,
+    seq: event.seq,
+    role: event.role,
+    text: event.text,
+    at: event.at,
+  }
+  // like the server's upsert by (room, seq): a correction replaces its turn
+  return [...(turns ?? []).filter((t) => t.seq !== turn.seq), turn].sort(
+    (a, b) => a.seq - b.seq
+  )
+}
+
 export function useCallsStream() {
   const { mutate } = useSWRConfig()
   return useSWRSubscription<CallEvent, Error>(
@@ -52,13 +79,22 @@ export function useCallsStream() {
           next(error instanceof Error ? error : new Error(String(error)))
           return
         }
-        void mutate<Call[]>(CALLS_KEY, (calls) => applyEvent(calls, event), {
-          revalidate: false,
-        })
+        if (event.event === "call.turn") {
+          void mutate<Turn[]>(
+            turnsKey(event.room),
+            (turns) => applyTurn(turns, event),
+            { revalidate: false }
+          )
+        } else {
+          void mutate<Call[]>(CALLS_KEY, (calls) => applyEvent(calls, event), {
+            revalidate: false,
+          })
+        }
         next(null, event)
       }
       source.addEventListener("call.started", deliver)
       source.addEventListener("call.ended", deliver)
+      source.addEventListener("call.turn", deliver)
       source.onerror = () => next(new Error("calls stream disconnected"))
       return () => source.close()
     }

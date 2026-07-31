@@ -14,6 +14,15 @@ export interface Call {
   duration_ms?: number
 }
 
+// Turn is one transcript turn as served by GET /calls/:room/turns.
+export interface Turn {
+  room: string
+  seq: number
+  role: "caller" | "agent"
+  text: string
+  at: number // unix ms
+}
+
 // CallStartedEvent mirrors the call.started SSE payload.
 export interface CallStartedEvent {
   event: "call.started"
@@ -32,4 +41,9 @@ export interface CallEndedEvent {
   duration_ms: number
 }
 
-export type CallEvent = CallStartedEvent | CallEndedEvent
+// CallTurnEvent mirrors the call.turn SSE payload; a repeated seq corrects earlier text.
+export interface CallTurnEvent extends Turn {
+  event: "call.turn"
+}
+
+export type CallEvent = CallStartedEvent | CallEndedEvent | CallTurnEvent
