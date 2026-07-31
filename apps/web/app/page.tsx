@@ -88,7 +88,7 @@ function Transcript({ room }: { room: string }) {
     at: fmtTime(turn.at),
   }))
   return (
-    <section className="flex flex-col gap-1">
+    <section className="flex flex-col gap-4">
       <h2 className="text-muted-foreground">transcript</h2>
       {error ? (
         <p className="text-destructive">transcript failed: {error.message}</p>
