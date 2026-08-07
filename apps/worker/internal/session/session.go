@@ -46,6 +46,14 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	if err != nil {
 		return setupErr(ctx, err)
 	}
+	if err := rm.WaitForAnswer(ctx); err != nil {
+		rm.Close()
+		if errors.Is(err, room.ErrNotAnswered) {
+			log.Info("call ended before answer", "reason", err)
+			return nil
+		}
+		return setupErr(ctx, err)
+	}
 	conv, err := opts.EL.Start(ctx, elevenlabs.StartOpts{Init: opts.Init})
 	if err != nil {
 		rm.Close()

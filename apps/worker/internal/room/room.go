@@ -41,15 +41,17 @@ type Room struct {
 	buf       *audio.PlayoutBuffer
 	callerPCM chan []byte
 	done      chan struct{}
+	answered  chan struct{}
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 
-	mu      sync.Mutex
-	ended   bool
-	err     error
-	claimed bool
-	rtrack  *webrtc.TrackRemote
+	mu          sync.Mutex
+	ended       bool
+	err         error
+	claimed     bool
+	answeredSet bool
+	rtrack      *webrtc.TrackRemote
 }
 
 // Join connects to one room, publishes the agent track, and starts bridging audio.
@@ -83,6 +85,7 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		buf:       audio.NewPlayoutBuffer(),
 		callerPCM: make(chan []byte, callerPCMBuffer),
 		done:      make(chan struct{}),
+		answered:  make(chan struct{}),
 		ctx:       rctx,
 		cancel:    cancel,
 	}
@@ -93,7 +96,8 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		OnReconnecting:            func() { log.Info("room reconnecting") },
 		OnReconnected:             func() { log.Info("room reconnected") },
 		ParticipantCallback: lksdk.ParticipantCallback{
-			OnTrackSubscribed: r.onTrackSubscribed,
+			OnTrackSubscribed:   r.onTrackSubscribed,
+			OnAttributesChanged: r.onAttributesChanged,
 		},
 	}
 	lkroom, err := lksdk.ConnectToRoom(opts.URL, lksdk.ConnectInfo{
@@ -156,10 +160,10 @@ func (r *Room) CallerPCM() <-chan []byte { return r.callerPCM }
 func (r *Room) Caller() (from, to string) {
 	for _, rp := range r.room.GetRemoteParticipants() {
 		attrs := rp.Attributes()
-		if attrs["sip.callID"] == "" {
+		if attrs[livekit.AttrSIPCallID] == "" {
 			continue
 		}
-		return attrs["sip.phoneNumber"], attrs["sip.trunkPhoneNumber"]
+		return attrs[livekit.AttrSIPPhoneNumber], attrs[livekit.AttrSIPTrunkNumber]
 	}
 	return "", ""
 }
