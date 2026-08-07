@@ -35,6 +35,7 @@ describe("decodeCallEvent", () => {
       conversation_id: "c1",
       from: "+15550001111",
       to: "+15550002222",
+      direction: "inbound",
       started_at: "1722300000000",
     });
     expect(Either.getOrThrow(ev)).toEqual({
@@ -43,6 +44,7 @@ describe("decodeCallEvent", () => {
       conversation_id: "c1",
       from: "+15550001111",
       to: "+15550002222",
+      direction: "inbound",
       started_at: 1722300000000,
     });
   });

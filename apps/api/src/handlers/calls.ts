@@ -112,6 +112,7 @@ export const CallSnapshot = Schema.Struct({
   ),
   from: Schema.optional(Schema.String),
   to: Schema.optional(Schema.String),
+  direction: Schema.optional(Schema.String),
   startedAt: Schema.optional(Schema.DateFromNumber).pipe(
     Schema.fromKey("started_at"),
   ),

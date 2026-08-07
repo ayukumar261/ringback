@@ -70,6 +70,7 @@ function CallDetails({ call }: { call: Call }) {
     status: call.status,
     from: call.from || undefined,
     to: call.to || undefined,
+    direction: call.direction || undefined,
     started: fmtTime(call.started_at),
     ended: fmtTime(call.ended_at),
     duration: fmtDuration(call.duration_ms),

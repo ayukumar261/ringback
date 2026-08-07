@@ -8,6 +8,7 @@ export interface CallDoc {
   conversationId?: string;
   from?: string;
   to?: string;
+  direction?: string;
   startedAt?: Date;
   endedAt?: Date;
   durationMs?: number;

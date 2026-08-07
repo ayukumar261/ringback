@@ -9,6 +9,7 @@ export interface Call {
   conversation_id?: string
   from?: string
   to?: string
+  direction?: string
   started_at?: number // unix ms
   ended_at?: number // unix ms
   duration_ms?: number
@@ -30,6 +31,7 @@ export interface CallStartedEvent {
   conversation_id?: string
   from?: string
   to?: string
+  direction?: string
   started_at: number
 }
 

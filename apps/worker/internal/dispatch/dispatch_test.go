@@ -10,6 +10,7 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lkwebhook "github.com/livekit/protocol/webhook"
 
+	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 )
 
@@ -87,6 +88,23 @@ func TestStartsSessionForCallRoom(t *testing.T) {
 
 	d.HandleEvent(event(lkwebhook.EventRoomFinished, "call-abc"))
 	waitRecv(t, b.ended, "cancellation after room_finished")
+	waitEmpty(t, d)
+}
+
+func TestStampsInboundDirection(t *testing.T) {
+	got := make(chan session.Opts, 1)
+	d := New(session.Opts{}, Config{
+		Run: func(_ context.Context, _ string, opts session.Opts) error {
+			got <- opts
+			return nil
+		},
+		Delete: nopDelete,
+	})
+
+	d.HandleEvent(event(lkwebhook.EventRoomStarted, "call-abc"))
+	if opts := waitRecv(t, got, "session opts"); opts.Direction != events.DirectionInbound {
+		t.Fatalf("direction = %q, want %q", opts.Direction, events.DirectionInbound)
+	}
 	waitEmpty(t, d)
 }
 

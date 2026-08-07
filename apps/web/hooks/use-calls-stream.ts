@@ -36,6 +36,7 @@ function applyEvent(
           conversation_id: event.conversation_id ?? "",
           from: event.from ?? "",
           to: event.to ?? "",
+          direction: event.direction ?? "",
         }
       : {
           ...(existing ?? { room: event.room }),

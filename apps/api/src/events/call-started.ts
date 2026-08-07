@@ -8,6 +8,7 @@ export const CallStarted = Schema.Struct({
   conversation_id: Schema.optional(Schema.String),
   from: Schema.optional(Schema.String),
   to: Schema.optional(Schema.String),
+  direction: Schema.optional(Schema.String),
   started_at: Schema.NumberFromString,
 });
 export type CallStarted = typeof CallStarted.Type;
@@ -27,6 +28,7 @@ export const applyCallStarted = (mongo: MongoClient, ev: CallStarted) =>
           conversationId: ev.conversation_id ?? "",
           from: ev.from ?? "",
           to: ev.to ?? "",
+          direction: ev.direction ?? "",
         },
       },
       { upsert: true },

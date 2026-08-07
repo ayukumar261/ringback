@@ -20,6 +20,7 @@ type Opts struct {
 	LiveKitAPISecret string
 	EL               *elevenlabs.Client
 	Init             elevenlabs.InitData // per-call overrides, usually zero
+	Direction        string              // events.DirectionInbound or events.DirectionOutbound, set by the entry point
 	Events           *events.Publisher   // nil publishes nothing
 	Log              *slog.Logger        // nil means slog.Default()
 }
@@ -60,6 +61,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		ConversationID: conv.Meta().ConversationID,
 		From:           from,
 		To:             to,
+		Direction:      opts.Direction,
 		At:             start,
 	})
 	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), log)

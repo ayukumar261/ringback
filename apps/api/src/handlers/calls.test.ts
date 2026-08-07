@@ -188,6 +188,7 @@ const activeDoc: CallDoc = {
   conversationId: "conv-1",
   from: "+15550001111",
   to: "+15550002222",
+  direction: "inbound",
   startedAt: new Date(1000),
 };
 
@@ -223,6 +224,7 @@ describe("listCalls", () => {
         conversation_id: "conv-1",
         from: "+15550001111",
         to: "+15550002222",
+        direction: "inbound",
         started_at: 1000,
       },
     ]);
