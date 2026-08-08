@@ -16,14 +16,14 @@ import (
 )
 
 const (
-	defaultRoomPrefix = "call-"
+	defaultRoomPrefix = "call"
 	defaultMaxCall    = 30 * time.Minute // backstop against sessions no hangup ever ends
 	deleteTimeout     = 5 * time.Second  // cap on the post-session room delete call
 )
 
 // Config tunes one Dispatcher.
 type Config struct {
-	RoomPrefix string                                                              // empty means call-
+	RoomPrefix string                                                              // empty means call
 	MaxCall    time.Duration                                                       // zero means 30m
 	Run        func(ctx context.Context, roomName string, opts session.Opts) error // nil means session.Run
 	Delete     func(ctx context.Context, roomName string) error                    // nil means LiveKit room deletion

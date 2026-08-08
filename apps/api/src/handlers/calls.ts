@@ -225,8 +225,8 @@ export const place = (
         { status: 503 },
       );
     }
-    // call- prefix makes the worker join and the attribute makes it read from/to as outbound
-    const room = `call-${randomUUID()}`;
+    // the room shape mirrors what LiveKit generates for inbound calls, call_<number>_<random>
+    const room = `call_${parsed.right.to}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     yield* Effect.tryPromise(() =>
       sip.createSipParticipant(trunk.sipTrunkId, parsed.right.to, room, {
         participantIdentity: "sip-outbound",

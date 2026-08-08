@@ -5,7 +5,7 @@
   },
   "rule": {
     "dispatchRuleIndividual": {
-      "roomPrefix": "call-"
+      "roomPrefix": "call"
     }
   }
 }

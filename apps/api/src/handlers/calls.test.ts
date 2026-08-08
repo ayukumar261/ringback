@@ -400,7 +400,7 @@ describe("place", () => {
     const dial = dialed[0]!;
     expect(dial.trunkId).toBe("ST_out");
     expect(dial.to).toBe("+15551234567");
-    expect(dial.room).toMatch(/^call-/);
+    expect(dial.room).toMatch(/^call_\+15551234567_[0-9a-f]{12}$/);
     expect(dial.opts?.participantAttributes).toEqual({
       "ringback.direction": "outbound",
     });
