@@ -97,6 +97,9 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       MONGODB_URI: mongodb://mongo:27017/ringback
+      LIVEKIT_URL: http://host.docker.internal:7880
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   redis-data:

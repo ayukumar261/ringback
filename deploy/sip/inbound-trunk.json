@@ -1,6 +1,6 @@
 {
   "trunk": {
-    "name": "twilio",
+    "name": "twilio-inbound",
     "numbers": ["+17627013110"],
     "allowed_addresses": [
       "54.172.60.0/30",

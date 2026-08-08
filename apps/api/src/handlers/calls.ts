@@ -1,8 +1,11 @@
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
-import { Effect, PubSub, Schedule, Schema, Stream } from "effect";
+import { Config, Effect, Option, PubSub, Schedule, Schema, Stream } from "effect";
 import type { Redis } from "ioredis";
+import type { SipClient } from "livekit-server-sdk";
 import { CallStream, decodeCallEvent, entryFields } from "../events/index.js";
 import { CallFeed, type FeedEvent } from "../pipeline/feed.js";
+import { LiveKitClient } from "../clients/livekit.js";
 import { MongoClient } from "../clients/mongo.js";
 import { RedisClient } from "../clients/redis.js";
 
@@ -151,6 +154,107 @@ export const callsSnapshot = Effect.gen(function* () {
 }).pipe(
   Effect.catchAll((error) =>
     Effect.logError("calls: snapshot failed", error).pipe(
+      Effect.zipRight(
+        HttpServerResponse.json({ error: "internal" }, { status: 500 }),
+      ),
+    ),
+  ),
+);
+
+// OUTBOUND_TRUNK_NAME is the trunk deploy/sip/outbound-trunk.json converges.
+const OUTBOUND_TRUNK_NAME = "twilio-outbound";
+
+// ApiKey is the shared secret guarding call placement, and leaving it unset disables the endpoint.
+const ApiKey = Config.option(Config.string("RINGBACK_API_KEY"));
+
+// PlaceCall is the POST /calls body carrying one E.164 destination.
+const PlaceCall = Schema.Struct({
+  to: Schema.String.pipe(Schema.pattern(/^\+[1-9]\d{6,14}$/)),
+});
+const decodeBody = Schema.decodeUnknown(PlaceCall);
+
+// Sip is the slice of the LiveKit client that placing a call needs.
+export type Sip = Pick<SipClient, "listSipOutboundTrunk" | "createSipParticipant">;
+
+// authorized reports whether the header is exactly "Bearer <key>", in constant time.
+export const authorized = (
+  header: string | undefined,
+  key: string,
+): boolean => {
+  const presented = Buffer.from(header ?? "");
+  const expected = Buffer.from(`Bearer ${key}`);
+  return (
+    presented.length === expected.length &&
+    timingSafeEqual(presented, expected)
+  );
+};
+
+// place dials one number through the outbound trunk after checking the bearer key.
+export const place = (
+  sip: Sip,
+  key: string | undefined,
+  authorization: string | undefined,
+  body: unknown,
+) =>
+  Effect.gen(function* () {
+    if (key === undefined) {
+      yield* Effect.logWarning("calls: RINGBACK_API_KEY unset, refusing to dial");
+      return yield* HttpServerResponse.json({ error: "disabled" }, { status: 503 });
+    }
+    if (!authorized(authorization, key)) {
+      return yield* HttpServerResponse.json(
+        { error: "unauthorized" },
+        { status: 401 },
+      );
+    }
+    const parsed = yield* decodeBody(body).pipe(Effect.either);
+    if (parsed._tag === "Left") {
+      return yield* HttpServerResponse.json(
+        { error: "to must be E.164, like +15551234567" },
+        { status: 400 },
+      );
+    }
+    const trunks = yield* Effect.tryPromise(() => sip.listSipOutboundTrunk());
+    const trunk = trunks.find((t) => t.name === OUTBOUND_TRUNK_NAME);
+    if (trunk === undefined) {
+      yield* Effect.logError(
+        `calls: outbound trunk ${OUTBOUND_TRUNK_NAME} not found`,
+      );
+      return yield* HttpServerResponse.json(
+        { error: "no outbound trunk" },
+        { status: 503 },
+      );
+    }
+    // call- prefix makes the worker join and the attribute makes it read from/to as outbound
+    const room = `call-out-${randomUUID()}`;
+    yield* Effect.tryPromise(() =>
+      sip.createSipParticipant(trunk.sipTrunkId, parsed.right.to, room, {
+        participantIdentity: "sip-outbound",
+        participantAttributes: { "ringback.direction": "outbound" },
+      }),
+    );
+    yield* Effect.logInfo(`calls: dialing ${parsed.right.to} in ${room}`);
+    return yield* HttpServerResponse.json({ room }, { status: 201 });
+  });
+
+// placeCall serves POST /calls, which dials one number as the agent behind RINGBACK_API_KEY.
+export const placeCall = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const sip = yield* LiveKitClient;
+  const key = yield* ApiKey;
+  const body = yield* request.json;
+  return yield* place(
+    sip,
+    Option.getOrUndefined(key),
+    request.headers["authorization"],
+    body,
+  );
+}).pipe(
+  Effect.catchTag("RequestError", () =>
+    HttpServerResponse.json({ error: "body must be JSON" }, { status: 400 }),
+  ),
+  Effect.catchAll((error) =>
+    Effect.logError("calls: place failed", error).pipe(
       Effect.zipRight(
         HttpServerResponse.json({ error: "internal" }, { status: 500 }),
       ),

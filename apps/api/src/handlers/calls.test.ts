@@ -1,11 +1,24 @@
 import { HttpServerResponse } from "@effect/platform";
 import { Chunk, Effect, Fiber, PubSub, Stream } from "effect";
 import type { Redis } from "ioredis";
+import type {
+  SIPOutboundTrunkInfo,
+  SIPParticipantInfo,
+} from "livekit-server-sdk";
 import { describe, expect, it } from "vitest";
 import { type CallDoc, MongoClient } from "../clients/mongo.js";
 import type { CallEvent } from "../events/index.js";
 import { CallFeed } from "../pipeline/feed.js";
-import { callsSnapshot, events, frame, isAfter, listCalls } from "./calls.js";
+import {
+  authorized,
+  callsSnapshot,
+  events,
+  frame,
+  isAfter,
+  listCalls,
+  place,
+  type Sip,
+} from "./calls.js";
 
 // started/ended build decoded events as the materializer would publish them.
 const started = (room: string, at: number): CallEvent => ({
@@ -293,5 +306,103 @@ describe("callsSnapshot", () => {
   it("responds 500 on an undecodable doc", async () => {
     const response = await run([{ room: "r-x", status: "weird" as never }]);
     expect(response.status).toBe(500);
+  });
+});
+
+// Dial is one recorded createSipParticipant call.
+interface Dial {
+  trunkId: string;
+  to: string;
+  room: string;
+  opts: { participantAttributes?: Record<string, string> } | undefined;
+}
+
+// fakeSip answers trunk listings from a fixture and records every dial.
+const fakeSip = (trunks: Array<{ name: string; sipTrunkId: string }>) => {
+  const dialed: Dial[] = [];
+  const sip = {
+    listSipOutboundTrunk: () =>
+      Promise.resolve(trunks as SIPOutboundTrunkInfo[]),
+    createSipParticipant: (
+      trunkId: string,
+      to: string,
+      room: string,
+      opts?: Dial["opts"],
+    ) => {
+      dialed.push({ trunkId, to, room, opts });
+      return Promise.resolve({} as SIPParticipantInfo);
+    },
+  } as unknown as Sip;
+  return { sip, dialed };
+};
+
+const TRUNKS = [
+  { name: "other", sipTrunkId: "ST_other" },
+  { name: "twilio-outbound", sipTrunkId: "ST_out" },
+];
+
+describe("authorized", () => {
+  it("accepts only the exact bearer header", () => {
+    expect(authorized("Bearer k1", "k1")).toBe(true);
+    expect(authorized("Bearer k2", "k1")).toBe(false);
+    expect(authorized("Bearer k1longer", "k1")).toBe(false);
+    expect(authorized("k1", "k1")).toBe(false);
+    expect(authorized(undefined, "k1")).toBe(false);
+  });
+});
+
+describe("place", () => {
+  it("refuses everything while no key is configured", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    const res = await Effect.runPromise(
+      place(sip, undefined, "Bearer k1", { to: "+15551234567" }),
+    );
+    expect(res.status).toBe(503);
+    expect(dialed).toEqual([]);
+  });
+
+  it("rejects a missing or wrong key", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    for (const header of [undefined, "Bearer wrong"]) {
+      const res = await Effect.runPromise(
+        place(sip, "k1", header, { to: "+15551234567" }),
+      );
+      expect(res.status).toBe(401);
+    }
+    expect(dialed).toEqual([]);
+  });
+
+  it("rejects a number that is not E.164", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    for (const to of ["15551234567", "+1 555 123 4567", "", 42]) {
+      const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", { to }));
+      expect(res.status).toBe(400);
+    }
+    expect(dialed).toEqual([]);
+  });
+
+  it("answers 503 when the outbound trunk is missing", async () => {
+    const { sip, dialed } = fakeSip([{ name: "other", sipTrunkId: "ST_other" }]);
+    const res = await Effect.runPromise(
+      place(sip, "k1", "Bearer k1", { to: "+15551234567" }),
+    );
+    expect(res.status).toBe(503);
+    expect(dialed).toEqual([]);
+  });
+
+  it("dials through the named trunk into a call-out room marked outbound", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    const res = await Effect.runPromise(
+      place(sip, "k1", "Bearer k1", { to: "+15551234567" }),
+    );
+    expect(res.status).toBe(201);
+    expect(dialed).toHaveLength(1);
+    const dial = dialed[0]!;
+    expect(dial.trunkId).toBe("ST_out");
+    expect(dial.to).toBe("+15551234567");
+    expect(dial.room).toMatch(/^call-out-/);
+    expect(dial.opts?.participantAttributes).toEqual({
+      "ringback.direction": "outbound",
+    });
   });
 });

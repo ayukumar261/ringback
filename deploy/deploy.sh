@@ -9,8 +9,9 @@ cd /opt/ringback
 # LiveKit CLI needs $HOME set
 export HOME="${HOME:-/root}"
 
-# Desired-state SIP data; the names inside are the identity anchor for convergence
-TRUNK_JSON=deploy/sip/inbound-trunk.json
+# The SIP setup we want, found on the live server by the names inside these files
+INBOUND_TRUNK_JSON=deploy/sip/inbound-trunk.json
+OUTBOUND_TRUNK_JSON=deploy/sip/outbound-trunk.json
 RULE_JSON=deploy/sip/dispatch-rule.json
 
 # Fall back to the deployment .env when LiveKit creds aren't already in the environment
@@ -24,7 +25,7 @@ sip_env() {
   export LIVEKIT_API_KEY LIVEKIT_API_SECRET
 }
 
-# Wait for the LiveKit API; deploys briefly peg the 1-vCPU box while containers recreate
+# Wait for the LiveKit API because deploys briefly max out the one-core box while containers restart
 sip_wait() {
   local i err
   for i in {1..30}; do
@@ -34,10 +35,44 @@ sip_wait() {
   done
 }
 
-# Print the ID of the trunk matching the desired name, if it exists
+# Print the ID of the inbound or outbound trunk whose name matches the JSON file, if any
 sip_find_trunk() {
-  lk --silent sip inbound list --json | jq -r --arg n "$(jq -r .trunk.name "$TRUNK_JSON")" \
+  lk --silent sip "$1" list --json | jq -r --arg n "$(jq -r .trunk.name "$2")" \
     '.items // [] | map(select(.name == $n)) | .[0].sipTrunkId // empty'
+}
+
+# Print every trunk ID in the given direction, one per line
+sip_list_trunks() {
+  lk --silent sip "$1" list --json | jq -r '.items // [] | .[].sipTrunkId'
+}
+
+# Create or update one trunk to match its JSON, keeping its ID stable, and print that ID
+sip_converge_trunk() {
+  local dir=$1 json=$2 trunk_id ids
+  trunk_id=$(sip_find_trunk "$dir" "$json")
+  # After a rename nothing matches the new name, so adopt the one leftover trunk instead of creating a twin
+  if [[ -z "$trunk_id" ]]; then
+    ids=$(sip_list_trunks "$dir")
+    if [[ -n "$ids" && $(echo "$ids" | wc -l) -gt 1 ]]; then
+      echo "[sip] several $dir trunks exist and none matches $(jq -r .trunk.name "$json"); delete the strays, then redeploy" >&2
+      return 1
+    fi
+    trunk_id=$ids
+    if [[ -n "$trunk_id" ]]; then
+      echo "[sip] adopting lone $dir trunk $trunk_id under its new name" >&2
+    fi
+  fi
+  if [[ -z "$trunk_id" ]]; then
+    lk --silent sip "$dir" create "$json" >/dev/null
+    trunk_id=$(sip_find_trunk "$dir" "$json")
+    echo "[sip] created $dir trunk $trunk_id" >&2
+  else
+    # lk update parses the Info object (ID embedded), not the request wrapper its usage string claims
+    jq --arg id "$trunk_id" '.trunk + {sip_trunk_id: $id}' "$json" \
+      | lk --silent sip "$dir" update - >/dev/null
+    echo "[sip] updated $dir trunk $trunk_id" >&2
+  fi
+  echo "$trunk_id"
 }
 
 # Converge the live LiveKit SIP config with deploy/sip/
@@ -45,25 +80,28 @@ sip_converge() {
   sip_env
   sip_wait
 
-  # Trunk: create if missing, otherwise replace in place (ID preserved, no routing gap)
+  # Converge both trunks, keeping only the inbound ID for the rule below
   local trunk_id
-  trunk_id=$(sip_find_trunk)
-  if [[ -z "$trunk_id" ]]; then
-    lk --silent sip inbound create "$TRUNK_JSON" >/dev/null
-    trunk_id=$(sip_find_trunk)
-    echo "[sip] created trunk $trunk_id"
-  else
-    # lk update parses the Info object (ID embedded), not the request wrapper its usage string claims
-    jq --arg id "$trunk_id" '.trunk + {sip_trunk_id: $id}' "$TRUNK_JSON" \
-      | lk --silent sip inbound update - >/dev/null
-    echo "[sip] updated trunk $trunk_id"
-  fi
+  trunk_id=$(sip_converge_trunk inbound "$INBOUND_TRUNK_JSON")
+  sip_converge_trunk outbound "$OUTBOUND_TRUNK_JSON" >/dev/null
 
-  # Rule: same, always pinned to the discovered trunk ID rather than one baked into the file
-  local rule_name rule_id
+  # The rule converges the same way, always pinned to the inbound trunk found above rather than an ID baked into the file
+  local rule_name rule_id rule_ids
   rule_name=$(jq -r .name "$RULE_JSON")
   rule_id=$(lk --silent sip dispatch list --json | jq -r --arg n "$rule_name" \
     '.items // [] | map(select(.name == $n)) | .[0].sipDispatchRuleId // empty')
+  # Renamed rules get the same lone-adoption treatment as the trunks
+  if [[ -z "$rule_id" ]]; then
+    rule_ids=$(lk --silent sip dispatch list --json | jq -r '.items // [] | .[].sipDispatchRuleId')
+    if [[ -n "$rule_ids" && $(echo "$rule_ids" | wc -l) -gt 1 ]]; then
+      echo "[sip] several dispatch rules exist and none is named $rule_name; delete the strays, then redeploy" >&2
+      return 1
+    fi
+    rule_id=$rule_ids
+    if [[ -n "$rule_id" ]]; then
+      echo "[sip] adopting lone dispatch rule $rule_id under its new name" >&2
+    fi
+  fi
   if [[ -z "$rule_id" ]]; then
     jq --arg tid "$trunk_id" '.trunk_ids = [$tid]' "$RULE_JSON" \
       | lk --silent sip dispatch create - >/dev/null

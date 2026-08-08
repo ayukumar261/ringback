@@ -4,6 +4,7 @@ import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Effect, Layer } from "effect";
 import { CallFeed } from "./pipeline/feed.js";
 import { MaterializerLive } from "./pipeline/materializer.js";
+import { LiveKitClient } from "./clients/livekit.js";
 import { MongoClient } from "./clients/mongo.js";
 import { RedisClient } from "./clients/redis.js";
 import { router } from "./router.js";
@@ -23,8 +24,9 @@ const HttpLive = Layer.unwrapEffect(
     router.pipe(
       HttpMiddleware.cors({
         allowedOrigins,
-        allowedMethods: ["GET"],
-        allowedHeaders: ["Last-Event-ID"], // EventSource sends it on resume, triggering a preflight
+        allowedMethods: ["GET", "POST"],
+        // Last-Event-ID: EventSource sends it on resume; the rest let the dashboard place calls
+        allowedHeaders: ["Last-Event-ID", "Authorization", "Content-Type"],
         maxAge: 3600,
       }),
       HttpServer.serve(HttpMiddleware.logger),
@@ -35,7 +37,12 @@ const HttpLive = Layer.unwrapEffect(
 
 const AppLive = Layer.mergeAll(HttpLive, MaterializerLive).pipe(
   Layer.provide(
-    Layer.mergeAll(RedisClient.Default, MongoClient.Default, CallFeed.Default),
+    Layer.mergeAll(
+      RedisClient.Default,
+      MongoClient.Default,
+      LiveKitClient.Default,
+      CallFeed.Default,
+    ),
   ),
 );
 

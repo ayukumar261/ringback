@@ -1,0 +1,7 @@
+{
+  "trunk": {
+    "name": "twilio-outbound",
+    "address": "ringback.pstn.twilio.com",
+    "numbers": ["+17627013110"]
+  }
+}
