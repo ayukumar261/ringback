@@ -31,7 +31,7 @@ func TestCallStartedValues(t *testing.T) {
 	p := New(fake, nil)
 
 	at := time.UnixMilli(1753795200123)
-	p.CallStarted(Start{Room: "call-a", ConversationID: "conv-1", From: "+14155550100", To: "+18005550199", Direction: DirectionInbound, At: at})
+	p.CallStarted(Start{Room: "call-a", ConversationID: "conv-1", From: "+14155550100", To: "+18005550199", Direction: "inbound", At: at})
 
 	if len(fake.args) != 1 {
 		t.Fatalf("XAdd calls = %d, want 1", len(fake.args))

@@ -70,7 +70,7 @@ sip_converge() {
     echo "[sip] created rule '$rule_name'"
   else
     jq --arg id "$rule_id" --arg tid "$trunk_id" \
-      '{sip_dispatch_rule_id: $id, name: .name, trunk_ids: [$tid], rule: .rule}' "$RULE_JSON" \
+      '{sip_dispatch_rule_id: $id, name: .name, trunk_ids: [$tid], rule: .rule, attributes: .attributes}' "$RULE_JSON" \
       | lk --silent sip dispatch update - >/dev/null
     echo "[sip] updated rule $rule_id"
   fi

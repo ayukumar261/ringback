@@ -1,5 +1,8 @@
 {
   "name": "inbound-calls",
+  "attributes": {
+    "ringback.direction": "inbound"
+  },
   "rule": {
     "dispatchRuleIndividual": {
       "roomPrefix": "call-"

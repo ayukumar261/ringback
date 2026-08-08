@@ -18,19 +18,13 @@ const (
 	publishTimeout = time.Second
 )
 
-// Call directions.
-const (
-	DirectionInbound  = "inbound"
-	DirectionOutbound = "outbound"
-)
-
 // Start describes one call the moment its agent conversation is live.
 type Start struct {
 	Room           string
 	ConversationID string
 	From           string // caller's number, empty if the SIP participant was not visible
 	To             string // dialed number, empty likewise
-	Direction      string // DirectionInbound or DirectionOutbound, empty if unknown
+	Direction      string // room.DirectionInbound or room.DirectionOutbound, empty if unknown
 	At             time.Time
 }
 

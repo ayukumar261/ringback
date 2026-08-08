@@ -20,7 +20,6 @@ type Opts struct {
 	LiveKitAPISecret string
 	EL               *elevenlabs.Client
 	Init             elevenlabs.InitData // per-call overrides, usually zero
-	Direction        string              // events.DirectionInbound or events.DirectionOutbound, set by the entry point
 	Events           *events.Publisher   // nil publishes nothing
 	Log              *slog.Logger        // nil means slog.Default()
 }
@@ -63,13 +62,13 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	start := time.Now()
 	log = log.With("conversation", conv.Meta().ConversationID)
 	log.Info("session started")
-	from, to := rm.Caller()
+	from, to, direction := rm.Caller()
 	opts.Events.CallStarted(events.Start{
 		Room:           roomName,
 		ConversationID: conv.Meta().ConversationID,
 		From:           from,
 		To:             to,
-		Direction:      opts.Direction,
+		Direction:      direction,
 		At:             start,
 	})
 	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), log)

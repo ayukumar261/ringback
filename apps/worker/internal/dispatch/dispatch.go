@@ -11,7 +11,6 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lkwebhook "github.com/livekit/protocol/webhook"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 )
@@ -69,8 +68,6 @@ func New(opts session.Opts, cfg Config) *Dispatcher {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	// Everything the webhook dispatcher starts is an inbound call.
-	opts.Direction = events.DirectionInbound
 	return &Dispatcher{
 		opts:    opts,
 		prefix:  cfg.RoomPrefix,
