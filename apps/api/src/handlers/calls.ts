@@ -226,7 +226,7 @@ export const place = (
       );
     }
     // call- prefix makes the worker join and the attribute makes it read from/to as outbound
-    const room = `call-out-${randomUUID()}`;
+    const room = `call-${randomUUID()}`;
     yield* Effect.tryPromise(() =>
       sip.createSipParticipant(trunk.sipTrunkId, parsed.right.to, room, {
         participantIdentity: "sip-outbound",

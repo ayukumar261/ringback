@@ -390,7 +390,7 @@ describe("place", () => {
     expect(dialed).toEqual([]);
   });
 
-  it("dials through the named trunk into a call-out room marked outbound", async () => {
+  it("dials through the named trunk into a call room marked outbound", async () => {
     const { sip, dialed } = fakeSip(TRUNKS);
     const res = await Effect.runPromise(
       place(sip, "k1", "Bearer k1", { to: "+15551234567" }),
@@ -400,7 +400,7 @@ describe("place", () => {
     const dial = dialed[0]!;
     expect(dial.trunkId).toBe("ST_out");
     expect(dial.to).toBe("+15551234567");
-    expect(dial.room).toMatch(/^call-out-/);
+    expect(dial.room).toMatch(/^call-/);
     expect(dial.opts?.participantAttributes).toEqual({
       "ringback.direction": "outbound",
     });
