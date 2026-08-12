@@ -381,6 +381,15 @@ describe("place", () => {
     expect(dialed).toEqual([]);
   });
 
+  it("rejects a malformed body", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    for (const body of [{}, null, [], "+15551234567"]) {
+      const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", body));
+      expect(res.status).toBe(400);
+    }
+    expect(dialed).toEqual([]);
+  });
+
   it("answers 503 when the outbound trunk is missing", async () => {
     const { sip, dialed } = fakeSip([{ name: "other", sipTrunkId: "ST_other" }]);
     const res = await Effect.runPromise(
