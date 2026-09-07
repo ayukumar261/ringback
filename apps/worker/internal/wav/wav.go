@@ -1,4 +1,4 @@
-// Package wav reads and writes mono 16-bit PCM wav files.
+// Package wav reads mono 16-bit PCM wav files and writes mono or multichannel ones.
 package wav
 
 import (
@@ -56,19 +56,76 @@ func Read(path string) ([]byte, int, error) {
 
 // Write saves mono 16 bit PCM samples as a wav file.
 func Write(path string, pcm []byte, rate int) error {
+	return os.WriteFile(path, append(header(rate, 1, len(pcm)), pcm...), 0o644)
+}
+
+// header builds the 44 byte RIFF, fmt and data prefix for 16 bit PCM.
+func header(rate, channels, dataLen int) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("RIFF")
-	binary.Write(&buf, binary.LittleEndian, uint32(36+len(pcm)))
+	binary.Write(&buf, binary.LittleEndian, uint32(36+dataLen))
 	buf.WriteString("WAVEfmt ")
 	binary.Write(&buf, binary.LittleEndian, uint32(16))
 	binary.Write(&buf, binary.LittleEndian, uint16(1))
-	binary.Write(&buf, binary.LittleEndian, uint16(1))
+	binary.Write(&buf, binary.LittleEndian, uint16(channels))
 	binary.Write(&buf, binary.LittleEndian, uint32(rate))
-	binary.Write(&buf, binary.LittleEndian, uint32(rate*2))
-	binary.Write(&buf, binary.LittleEndian, uint16(2))
+	binary.Write(&buf, binary.LittleEndian, uint32(rate*channels*2))
+	binary.Write(&buf, binary.LittleEndian, uint16(channels*2))
 	binary.Write(&buf, binary.LittleEndian, uint16(16))
 	buf.WriteString("data")
-	binary.Write(&buf, binary.LittleEndian, uint32(len(pcm)))
-	buf.Write(pcm)
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	binary.Write(&buf, binary.LittleEndian, uint32(dataLen))
+	return buf.Bytes()
+}
+
+// Writer appends interleaved 16 bit PCM frames to a wav file as they arrive.
+type Writer struct {
+	f        *os.File
+	channels int
+	n        int
+}
+
+// NewWriter creates the file and writes a header whose sizes Close fills in.
+func NewWriter(path string, rate, channels int) (*Writer, error) {
+	if channels < 1 {
+		return nil, fmt.Errorf("wav: channels must be at least 1, got %d", channels)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write(header(rate, channels, 0)); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &Writer{f: f, channels: channels}, nil
+}
+
+// Write appends one or more interleaved frames of 16 bit samples.
+func (w *Writer) Write(pcm []byte) error {
+	if len(pcm)%(w.channels*2) != 0 {
+		return fmt.Errorf("wav: frame must be a multiple of %d bytes, got %d", w.channels*2, len(pcm))
+	}
+	n, err := w.f.Write(pcm)
+	w.n += n
+	return err
+}
+
+// Close patches the RIFF and data sizes then closes the file.
+func (w *Writer) Close() error {
+	err := w.patch(4, uint32(36+w.n))
+	if err == nil {
+		err = w.patch(40, uint32(w.n))
+	}
+	if cerr := w.f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// patch overwrites one little endian size field at the given offset.
+func (w *Writer) patch(off int64, v uint32) error {
+	var b [4]byte
+	binary.LittleEndian.PutUint32(b[:], v)
+	_, err := w.f.WriteAt(b[:], off)
+	return err
 }
