@@ -27,6 +27,37 @@ func discardTurns() *turnLog {
 	return newTurnLog("room", func(events.Turn) {})
 }
 
+// instant is a clock whose every wait is already over.
+func instant(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time)
+	close(ch)
+	return ch
+}
+
+// fakeClock records every requested wait and fires only when the test says so.
+type fakeClock struct {
+	mu    sync.Mutex
+	waits []time.Duration
+	fire  chan time.Time
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{fire: make(chan time.Time)}
+}
+
+func (c *fakeClock) after(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.waits = append(c.waits, d)
+	return c.fire
+}
+
+func (c *fakeClock) asked() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.waits)
+}
+
 // fakeRoom is a scriptable roomHandle that records operations in order.
 type fakeRoom struct {
 	pcm  chan []byte
@@ -236,7 +267,7 @@ func (f *fakeConv) queue(evs ...agent.Event) {
 func runBridge(t *testing.T, ctx context.Context, rm *fakeRoom, conv *fakeConv) error {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { done <- bridge(ctx, rm, conv, discardTurns(), discard) }()
+	go func() { done <- bridge(ctx, rm, conv, discardTurns(), instant, discard) }()
 	select {
 	case err := <-done:
 		return err
@@ -266,7 +297,7 @@ func TestBridgeForwardsCallerAudio(t *testing.T) {
 		rm.pcm <- fr
 	}
 	done := make(chan error, 1)
-	go func() { done <- bridge(context.Background(), rm, conv, discardTurns(), discard) }()
+	go func() { done <- bridge(context.Background(), rm, conv, discardTurns(), instant, discard) }()
 	waitFor(t, func() bool { return len(conv.sent()) == len(frames) })
 	rm.kill(nil)
 	select {
@@ -316,7 +347,7 @@ func TestDownlinkRecordsTurns(t *testing.T) {
 	)
 
 	turns, got := newTestTurnLog("call-a")
-	if err := downlink(conv, rm, turns, discard); err != nil {
+	if err := downlink(conv, rm, turns, instant, discard); err != nil {
 		t.Fatalf("downlink = %v", err)
 	}
 	want := []events.Turn{
@@ -333,7 +364,7 @@ func TestDownlinkRunsSendDTMF(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
 	conv.queue(agent.Tool{ID: "c1", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)})
 
-	if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+	if err := downlink(conv, rm, discardTurns(), instant, discard); err != nil {
 		t.Fatalf("downlink = %v", err)
 	}
 	ops, _ := rm.snapshot()
@@ -371,7 +402,7 @@ func TestDownlinkToolErrors(t *testing.T) {
 			rm.dtmfErr = tt.dtmfErr
 			conv.queue(tt.call)
 
-			if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+			if err := downlink(conv, rm, discardTurns(), instant, discard); err != nil {
 				t.Fatalf("downlink = %v", err)
 			}
 			if ops, _ := rm.snapshot(); len(ops) != 0 {
@@ -396,8 +427,82 @@ func TestDownlinkToolResultErrClosedBenign(t *testing.T) {
 	conv.closed = true
 	conv.mu.Unlock()
 
-	if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+	if err := downlink(conv, rm, discardTurns(), instant, discard); err != nil {
 		t.Fatalf("downlink = %v, want nil on a closed conversation", err)
+	}
+}
+
+// startAnswer runs answerTool in the background and returns its result channel.
+func startAnswer(rm *fakeRoom, conv *fakeConv, call agent.Tool, after clock) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- answerTool(conv, rm, call, after, discard) }()
+	return done
+}
+
+// awaitAnswer fails the test unless answerTool returns nil promptly.
+func awaitAnswer(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("answerTool = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("answerTool did not return")
+	}
+}
+
+func TestAnswerToolHoldsUntilTonesFinish(t *testing.T) {
+	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
+	done := startAnswer(rm, conv, agent.Tool{ID: "c7", Name: "send_dtmf", Params: []byte(`{"digits":"1234"}`)}, clk.after)
+
+	waitFor(t, func() bool { return len(clk.asked()) == 1 })
+	if ops, _ := rm.snapshot(); !slices.Equal(ops, []string{"dtmf:1234"}) {
+		t.Fatalf("ops = %v, want the press before the hold", ops)
+	}
+	if got := clk.asked(); got[0] != 2*time.Second {
+		t.Fatalf("hold = %v, want %v", got[0], 2*time.Second)
+	}
+	if got := conv.results(); len(got) != 0 {
+		t.Fatalf("results = %v before the tones finished", got)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("answerTool = %v before the tones finished", err)
+	default:
+	}
+
+	clk.fire <- time.Time{}
+	awaitAnswer(t, done)
+	want := []toolResult{{id: "c7", result: "pressed 1234", isErr: false}}
+	if got := conv.results(); !slices.Equal(got, want) {
+		t.Fatalf("results = %v, want %v", got, want)
+	}
+}
+
+func TestAnswerToolHoldEndsWithRoom(t *testing.T) {
+	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
+	done := startAnswer(rm, conv, agent.Tool{ID: "c8", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
+
+	waitFor(t, func() bool { return len(clk.asked()) == 1 })
+	rm.kill(nil)
+	awaitAnswer(t, done)
+	if got := conv.results(); len(got) != 1 || got[0].id != "c8" {
+		t.Fatalf("results = %v, want the reply once the room ended", got)
+	}
+}
+
+func TestAnswerToolNoHoldOnFailure(t *testing.T) {
+	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
+	rm.dtmfErr = errors.New("room: send dtmf: room closed")
+	done := startAnswer(rm, conv, agent.Tool{ID: "c9", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
+
+	awaitAnswer(t, done)
+	if got := clk.asked(); len(got) != 0 {
+		t.Fatalf("clock asked for %v on a failed press", got)
+	}
+	if got := conv.results(); len(got) != 1 || !got[0].isErr {
+		t.Fatalf("results = %v, want one error reply", got)
 	}
 }
 
@@ -529,7 +634,7 @@ func TestBridgeCtxCancel(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- bridge(ctx, rm, conv, discardTurns(), discard) }()
+	go func() { done <- bridge(ctx, rm, conv, discardTurns(), instant, discard) }()
 	cancel()
 	// The real room and conversation die on their own when ctx ends.
 	rm.kill(context.Canceled)

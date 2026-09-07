@@ -31,8 +31,11 @@ type roomHandle interface {
 	Close() error
 }
 
+// clock waits out a span and is swapped for a fake in tests.
+type clock func(time.Duration) <-chan time.Time
+
 // bridge pumps audio both ways and tears both sides down when either ends.
-func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *turnLog, log *slog.Logger) error {
+func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *turnLog, after clock, log *slog.Logger) error {
 	// The room dying must unblock the event pump below.
 	watchDone := make(chan struct{})
 	go func() {
@@ -52,7 +55,7 @@ func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *
 		}
 	}()
 
-	clientErr := downlink(conv, rm, turns, log)
+	clientErr := downlink(conv, rm, turns, after, log)
 	if clientErr != nil {
 		conv.Close()
 	}
@@ -89,7 +92,7 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 }
 
 // downlink applies agent events to the room until the events close or a fatal server error.
-func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, log *slog.Logger) error {
+func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after clock, log *slog.Logger) error {
 	for ev := range conv.Events() {
 		switch e := ev.(type) {
 		case agent.Audio:
@@ -107,7 +110,7 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, log *slog.
 			turns.correct(e.Corrected)
 			log.Info("agent cut off", "corrected", e.Corrected)
 		case agent.Tool:
-			if err := answerTool(conv, rm, e, log); err != nil {
+			if err := answerTool(conv, rm, e, after, log); err != nil {
 				return err
 			}
 		case agent.Error:
@@ -123,14 +126,21 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, log *slog.
 	return nil
 }
 
-// answerTool runs one tool call and replies, treating a closed conversation as benign.
-func answerTool(conv agent.Conversation, rm roomHandle, call agent.Tool, log *slog.Logger) error {
-	result, err := runTool(rm, call)
+// answerTool runs one tool call and replies once its tones have played, treating a closed conversation as benign.
+func answerTool(conv agent.Conversation, rm roomHandle, call agent.Tool, after clock, log *slog.Logger) error {
+	result, hold, err := runTool(rm, call)
 	if err != nil {
 		log.Warn("tool failed", "tool", call.Name, "err", err)
 		err = conv.SendTool(call.ID, err.Error(), true)
 	} else {
-		log.Info("tool ran", "tool", call.Name, "result", result)
+		log.Info("tool ran", "tool", call.Name, "result", result, "hold", hold)
+		// Answering early would let the agent talk over the tones still on the wire.
+		if hold > 0 {
+			select {
+			case <-after(hold):
+			case <-rm.Done():
+			}
+		}
 		err = conv.SendTool(call.ID, result, false)
 	}
 	if err != nil && !errors.Is(err, net.ErrClosed) {

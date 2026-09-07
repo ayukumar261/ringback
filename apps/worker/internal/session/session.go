@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
+	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 )
 
@@ -71,7 +71,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		Direction:      direction,
 		At:             start,
 	})
-	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), log)
+	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), time.After, log)
 	elapsed := time.Since(start)
 	log.Info("session ended", "duration", elapsed.Round(time.Millisecond), "err", err)
 	opts.Events.CallEnded(events.End{

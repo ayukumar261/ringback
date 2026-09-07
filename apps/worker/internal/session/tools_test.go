@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 )
@@ -21,12 +22,15 @@ func TestRunToolSendDTMF(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rm := newFakeRoom()
-			got, err := runTool(rm, agent.Tool{ID: "c1", Name: "send_dtmf", Params: []byte(tt.params)})
+			got, hold, err := runTool(rm, agent.Tool{ID: "c1", Name: "send_dtmf", Params: []byte(tt.params)})
 			if err != nil {
 				t.Fatalf("runTool = %v", err)
 			}
 			if want := "pressed " + tt.digits; got != want {
 				t.Fatalf("result = %q, want %q", got, want)
+			}
+			if want := time.Duration(len(tt.digits)) * 500 * time.Millisecond; hold != want {
+				t.Fatalf("hold = %v, want %v", hold, want)
 			}
 			if ops, _ := rm.snapshot(); !slices.Equal(ops, []string{"dtmf:" + tt.digits}) {
 				t.Fatalf("ops = %v, want [dtmf:%s]", ops, tt.digits)
@@ -75,12 +79,12 @@ func TestRunToolErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rm := newFakeRoom()
 			rm.dtmfErr = tt.dtmfErr
-			got, err := runTool(rm, tt.call)
+			got, hold, err := runTool(rm, tt.call)
 			if err == nil {
 				t.Fatalf("runTool = %q, want error", got)
 			}
-			if got != "" {
-				t.Fatalf("result = %q, want empty on error", got)
+			if got != "" || hold != 0 {
+				t.Fatalf("result = %q hold %v, want neither on error", got, hold)
 			}
 			if !strings.Contains(err.Error(), tt.wantMsg) {
 				t.Fatalf("err = %v, want containing %q", err, tt.wantMsg)
