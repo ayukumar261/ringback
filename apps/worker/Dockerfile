@@ -36,6 +36,9 @@ RUN apk add --no-cache opus opusfile
 # Copy the compiled binary from the builder stage
 COPY --from=builder /out/worker /usr/local/bin/worker
 
+# Own the recording directory so a fresh audio volume is writable by nobody
+RUN mkdir -p /audio && chown nobody:nobody /audio
+
 # Drop root privileges
 USER nobody
 

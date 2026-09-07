@@ -70,6 +70,9 @@ services:
     environment:
       LIVEKIT_URL: ws://127.0.0.1:7880
       REDIS_URL: redis://127.0.0.1:6379
+      AUDIO_DIR: /audio
+    volumes:
+      - audio-data:/audio
     stop_grace_period: 15s
 
   web:
@@ -98,9 +101,13 @@ services:
       REDIS_URL: redis://redis:6379
       MONGODB_URI: mongodb://mongo:27017/ringback
       LIVEKIT_URL: http://host.docker.internal:7880
+      AUDIO_DIR: /audio
+    volumes:
+      - audio-data:/audio
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   redis-data:
   mongo-data:
+  audio-data:
