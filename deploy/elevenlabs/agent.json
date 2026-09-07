@@ -11,7 +11,7 @@
           "end_call": {
             "type": "system",
             "name": "end_call",
-            "description": "Ends the call. Call this whenever the other side says goodbye in any form, asks to end the call, or asks not to be called again, and when the prompt says the call is finished. Briefly acknowledge, then call it. Never just say goodbye and leave the line open.",
+            "description": "Ends the call. When the prompt gives you a task, you placed this call, so once you have what the task asked for, thank them, say goodbye, and call this. Never ask the other side if there is anything else you can help with, they called no one. Also call this whenever the other side says goodbye in any form, asks to end the call, or asks not to be called again. Briefly acknowledge, then call it. Never just say goodbye and leave the line open.",
             "response_timeout_secs": 20,
             "disable_interruptions": false,
             "interruption_mode": "allow",
