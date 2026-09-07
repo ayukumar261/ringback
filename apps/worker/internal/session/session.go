@@ -1,4 +1,4 @@
-// Package session bridges one LiveKit room to one ElevenLabs conversation for one call.
+// Package session bridges one LiveKit room to one agent conversation for one call.
 package session
 
 import (
@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 )
@@ -27,7 +27,7 @@ type Opts struct {
 // Run bridges roomName to one agent conversation and blocks until the call ends.
 func Run(ctx context.Context, roomName string, opts Opts) error {
 	if roomName == "" || opts.EL == nil {
-		return fmt.Errorf("session: run needs a room name and an ElevenLabs client")
+		return fmt.Errorf("session: run needs a room name and an agent client")
 	}
 	log := opts.Log
 	if log == nil {

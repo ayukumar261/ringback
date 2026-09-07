@@ -76,25 +76,33 @@ func (c *Client) Start(ctx context.Context, opts StartOpts) (*Conversation, erro
 		conn.CloseNow()
 		return nil, fmt.Errorf("elevenlabs: read metadata: %w", err)
 	}
-	ev, err := ParseServerEvent(data)
+	env, err := decodeFrame(data)
 	if err != nil {
 		conn.CloseNow()
 		return nil, err
 	}
-	switch m := ev.(type) {
-	case InitMetadata:
+	switch env.Type {
+	case "conversation_initiation_metadata":
+		if env.InitMetadata == nil {
+			conn.CloseNow()
+			return nil, errMissingPayload(env.Type, "conversation_initiation_metadata_event")
+		}
+		m := *env.InitMetadata
 		if m.UserInputAudioFormat != in || m.AgentOutputAudioFormat != out {
 			conn.CloseNow()
 			return nil, fmt.Errorf("elevenlabs: audio format mismatch: got in=%s out=%s want in=%s out=%s",
 				m.UserInputAudioFormat, m.AgentOutputAudioFormat, in, out)
 		}
 		return newConversation(ctx, conn, m), nil
-	case ClientError:
+	case "client_error":
 		conn.CloseNow()
-		return nil, fmt.Errorf("elevenlabs: handshake rejected: %s: %s", m.ErrorName, m.Message)
+		if env.ClientError == nil {
+			return nil, errMissingPayload(env.Type, "error_event")
+		}
+		return nil, fmt.Errorf("elevenlabs: handshake rejected: %s: %s", env.ClientError.ErrorName, env.ClientError.Message)
 	default:
 		conn.CloseNow()
-		return nil, fmt.Errorf("elevenlabs: handshake: unexpected first frame %T", ev)
+		return nil, fmt.Errorf("elevenlabs: handshake: unexpected first frame %q", env.Type)
 	}
 }
 

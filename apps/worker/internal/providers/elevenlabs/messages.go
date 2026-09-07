@@ -5,10 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-)
 
-// Event is one frame received from the server.
-type Event interface{ eventType() string }
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
+)
 
 // InitMetadata announces the conversation id and the audio formats.
 type InitMetadata struct {
@@ -17,84 +16,9 @@ type InitMetadata struct {
 	UserInputAudioFormat   string `json:"user_input_audio_format"`
 }
 
-func (InitMetadata) eventType() string { return "conversation_initiation_metadata" }
-
-// AudioEvent is agent speech as raw PCM.
-type AudioEvent struct {
-	PCM     []byte
-	EventID int
-}
-
-func (AudioEvent) eventType() string { return "audio" }
-
-// Interruption means the caller started talking over the agent.
-type Interruption struct {
-	EventID int    `json:"event_id"`
-	Reason  string `json:"reason"`
-}
-
-func (Interruption) eventType() string { return "interruption" }
-
-// UserTranscript is what the caller just said.
-type UserTranscript struct {
-	Text    string `json:"user_transcript"`
-	EventID int    `json:"event_id"`
-}
-
-func (UserTranscript) eventType() string { return "user_transcript" }
-
-// AgentResponse is the text the agent is about to speak.
-type AgentResponse struct {
-	Text    string `json:"agent_response"`
-	EventID int    `json:"event_id"`
-}
-
-func (AgentResponse) eventType() string { return "agent_response" }
-
-// AgentResponseCorrection is what the agent managed to say before being cut off.
-type AgentResponseCorrection struct {
-	Original  string `json:"original_agent_response"`
-	Corrected string `json:"corrected_agent_response"`
-	EventID   int    `json:"event_id"`
-}
-
-func (AgentResponseCorrection) eventType() string { return "agent_response_correction" }
-
-// ClientError is a fatal error from the server.
-type ClientError struct {
-	Code      int    `json:"code"`
-	ErrorName string `json:"error_name"`
-	Message   string `json:"message"`
-}
-
-func (ClientError) eventType() string { return "client_error" }
-
 // pingEvent is a keepalive check from the server.
 type pingEvent struct {
 	EventID int `json:"event_id"`
-}
-
-func (pingEvent) eventType() string { return "ping" }
-
-// UnknownEvent is any frame type this package does not model.
-type UnknownEvent struct {
-	Type string
-	Raw  []byte
-}
-
-func (u UnknownEvent) eventType() string { return u.Type }
-
-// serverEnvelope is the outer shape of every server frame.
-type serverEnvelope struct {
-	Type           string                   `json:"type"`
-	InitMetadata   *InitMetadata            `json:"conversation_initiation_metadata_event"`
-	Audio          *audioEventWire          `json:"audio_event"`
-	Ping           *pingEvent               `json:"ping_event"`
-	Interruption   *Interruption            `json:"interruption_event"`
-	UserTranscript *UserTranscript          `json:"user_transcription_event"`
-	AgentResponse  *AgentResponse           `json:"agent_response_event"`
-	Correction     *AgentResponseCorrection `json:"agent_response_correction_event"`
-	ClientError    *ClientError             `json:"error_event"`
 }
 
 // audioEventWire is the audio payload before base64 decoding.
@@ -103,18 +27,63 @@ type audioEventWire struct {
 	EventID     int    `json:"event_id"`
 }
 
-// ParseServerEvent decodes one server frame.
-func ParseServerEvent(data []byte) (Event, error) {
+// interruptionWire is the interruption payload as sent by the server.
+type interruptionWire struct {
+	EventID int    `json:"event_id"`
+	Reason  string `json:"reason"`
+}
+
+// transcriptWire is the user transcript payload as sent by the server.
+type transcriptWire struct {
+	Text    string `json:"user_transcript"`
+	EventID int    `json:"event_id"`
+}
+
+// responseWire is the agent response payload as sent by the server.
+type responseWire struct {
+	Text    string `json:"agent_response"`
+	EventID int    `json:"event_id"`
+}
+
+// correctionWire is the agent response correction payload as sent by the server.
+type correctionWire struct {
+	Original  string `json:"original_agent_response"`
+	Corrected string `json:"corrected_agent_response"`
+	EventID   int    `json:"event_id"`
+}
+
+// errorWire is the fatal error payload as sent by the server.
+type errorWire struct {
+	Code      int    `json:"code"`
+	ErrorName string `json:"error_name"`
+	Message   string `json:"message"`
+}
+
+// serverEnvelope is the outer shape of every server frame.
+type serverEnvelope struct {
+	Type           string            `json:"type"`
+	InitMetadata   *InitMetadata     `json:"conversation_initiation_metadata_event"`
+	Audio          *audioEventWire   `json:"audio_event"`
+	Ping           *pingEvent        `json:"ping_event"`
+	Interruption   *interruptionWire `json:"interruption_event"`
+	UserTranscript *transcriptWire   `json:"user_transcription_event"`
+	AgentResponse  *responseWire     `json:"agent_response_event"`
+	Correction     *correctionWire   `json:"agent_response_correction_event"`
+	ClientError    *errorWire        `json:"error_event"`
+}
+
+// decodeFrame unmarshals the envelope so the transport can intercept control frames.
+func decodeFrame(data []byte) (serverEnvelope, error) {
 	var env serverEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return nil, fmt.Errorf("elevenlabs: malformed server frame: %w", err)
+		return serverEnvelope{}, fmt.Errorf("elevenlabs: malformed server frame: %w", err)
 	}
+	return env, nil
+}
+
+// event maps a decoded envelope to the agent event it carries.
+func (env serverEnvelope) event(raw []byte) (agent.Event, error) {
 	switch env.Type {
-	case "conversation_initiation_metadata":
-		if env.InitMetadata == nil {
-			return nil, errMissingPayload(env.Type, "conversation_initiation_metadata_event")
-		}
-		return *env.InitMetadata, nil
 	case "audio":
 		if env.Audio == nil {
 			return nil, errMissingPayload(env.Type, "audio_event")
@@ -123,41 +92,53 @@ func ParseServerEvent(data []byte) (Event, error) {
 		if err != nil {
 			return nil, fmt.Errorf("elevenlabs: audio event %d: %w", env.Audio.EventID, err)
 		}
-		return AudioEvent{PCM: pcm, EventID: env.Audio.EventID}, nil
-	case "ping":
-		if env.Ping == nil {
-			return nil, errMissingPayload(env.Type, "ping_event")
-		}
-		return *env.Ping, nil
+		return agent.Audio{PCM: pcm, EventID: env.Audio.EventID}, nil
 	case "interruption":
 		// A bare interruption frame still counts.
 		if env.Interruption == nil {
-			return Interruption{}, nil
+			return agent.Interruption{}, nil
 		}
-		return *env.Interruption, nil
+		return agent.Interruption{EventID: env.Interruption.EventID, Reason: env.Interruption.Reason}, nil
 	case "user_transcript":
 		if env.UserTranscript == nil {
 			return nil, errMissingPayload(env.Type, "user_transcription_event")
 		}
-		return *env.UserTranscript, nil
+		return agent.UserTurn{Text: env.UserTranscript.Text, EventID: env.UserTranscript.EventID}, nil
 	case "agent_response":
 		if env.AgentResponse == nil {
 			return nil, errMissingPayload(env.Type, "agent_response_event")
 		}
-		return *env.AgentResponse, nil
+		return agent.AgentTurn{Text: env.AgentResponse.Text, EventID: env.AgentResponse.EventID}, nil
 	case "agent_response_correction":
 		if env.Correction == nil {
 			return nil, errMissingPayload(env.Type, "agent_response_correction_event")
 		}
-		return *env.Correction, nil
+		return agent.Correction{
+			Original:  env.Correction.Original,
+			Corrected: env.Correction.Corrected,
+			EventID:   env.Correction.EventID,
+		}, nil
 	case "client_error":
 		if env.ClientError == nil {
 			return nil, errMissingPayload(env.Type, "error_event")
 		}
-		return *env.ClientError, nil
+		return agent.Error{
+			Code:    env.ClientError.Code,
+			Name:    env.ClientError.ErrorName,
+			Message: env.ClientError.Message,
+		}, nil
 	default:
-		return UnknownEvent{Type: env.Type, Raw: bytes.Clone(data)}, nil
+		return agent.Unknown{Type: env.Type, Raw: bytes.Clone(raw)}, nil
 	}
+}
+
+// ParseServerEvent decodes one server frame into the agent event it carries.
+func ParseServerEvent(data []byte) (agent.Event, error) {
+	env, err := decodeFrame(data)
+	if err != nil {
+		return nil, err
+	}
+	return env.event(data)
 }
 
 func errMissingPayload(typ, key string) error {
@@ -207,4 +188,14 @@ func EncodePong(eventID int) ([]byte, error) {
 		Type    string `json:"type"`
 		EventID int    `json:"event_id"`
 	}{Type: "pong", EventID: eventID})
+}
+
+// EncodeToolResult builds the client_tool_result frame answering one tool call.
+func EncodeToolResult(id, result string, isErr bool) ([]byte, error) {
+	return json.Marshal(struct {
+		Type       string `json:"type"`
+		ToolCallID string `json:"tool_call_id"`
+		Result     string `json:"result"`
+		IsError    bool   `json:"is_error"`
+	}{Type: "client_tool_result", ToolCallID: id, Result: result, IsError: isErr})
 }

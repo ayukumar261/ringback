@@ -15,7 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 )
 
@@ -112,19 +112,27 @@ func (f *fakeRoom) snapshot() ([]string, int) {
 	return slices.Clone(f.ops), f.bufCalls
 }
 
-// fakeConv is a scriptable convHandle that records sent frames.
+// fakeConv is a scriptable agent.Conversation that records sent frames and tool results.
 type fakeConv struct {
-	events chan elevenlabs.Event
+	events chan agent.Event
 
 	mu       sync.Mutex
 	err      error
 	sends    [][]byte
 	sendErrs map[int]error
+	tools    []toolResult
 	closed   bool
 }
 
+// toolResult is one SendTool call as the fake recorded it.
+type toolResult struct {
+	id     string
+	result string
+	isErr  bool
+}
+
 func newFakeConv() *fakeConv {
-	return &fakeConv{events: make(chan elevenlabs.Event, 16)}
+	return &fakeConv{events: make(chan agent.Event, 16)}
 }
 
 func (f *fakeConv) SendAudio(pcm []byte) error {
@@ -138,7 +146,17 @@ func (f *fakeConv) SendAudio(pcm []byte) error {
 	return f.sendErrs[i]
 }
 
-func (f *fakeConv) Events() <-chan elevenlabs.Event { return f.events }
+func (f *fakeConv) SendTool(id, result string, isErr bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return net.ErrClosed
+	}
+	f.tools = append(f.tools, toolResult{id: id, result: result, isErr: isErr})
+	return nil
+}
+
+func (f *fakeConv) Events() <-chan agent.Event { return f.events }
 
 func (f *fakeConv) Err() error {
 	f.mu.Lock()
@@ -234,14 +252,14 @@ func TestBridgeForwardsCallerAudio(t *testing.T) {
 
 func TestBridgeEnqueueFlushOrder(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
-	conv.events <- elevenlabs.AudioEvent{PCM: []byte("a"), EventID: 1}
-	conv.events <- elevenlabs.AudioEvent{PCM: []byte("b"), EventID: 1}
-	conv.events <- elevenlabs.Interruption{EventID: 2}
-	conv.events <- elevenlabs.AudioEvent{PCM: []byte("c"), EventID: 3}
-	conv.events <- elevenlabs.UserTranscript{Text: "hi"}
-	conv.events <- elevenlabs.AgentResponse{Text: "hello"}
-	conv.events <- elevenlabs.AgentResponseCorrection{Corrected: "hel-"}
-	conv.events <- elevenlabs.UnknownEvent{Type: "vad_score", Raw: []byte("{}")}
+	conv.events <- agent.Audio{PCM: []byte("a"), EventID: 1}
+	conv.events <- agent.Audio{PCM: []byte("b"), EventID: 1}
+	conv.events <- agent.Interruption{EventID: 2}
+	conv.events <- agent.Audio{PCM: []byte("c"), EventID: 3}
+	conv.events <- agent.UserTurn{Text: "hi"}
+	conv.events <- agent.AgentTurn{Text: "hello"}
+	conv.events <- agent.Correction{Corrected: "hel-"}
+	conv.events <- agent.Unknown{Type: "vad_score", Raw: []byte("{}")}
 	conv.finish(websocket.CloseError{Code: websocket.StatusNormalClosure})
 
 	if err := runBridge(t, context.Background(), rm, conv); err != nil {
@@ -256,10 +274,10 @@ func TestBridgeEnqueueFlushOrder(t *testing.T) {
 
 func TestDownlinkRecordsTurns(t *testing.T) {
 	rm := newFakeRoom()
-	ch := make(chan elevenlabs.Event, 4)
-	ch <- elevenlabs.AgentResponse{Text: "Hello, how can I help?"}
-	ch <- elevenlabs.UserTranscript{Text: "What are your hours?"}
-	ch <- elevenlabs.AgentResponseCorrection{Original: "Hello, how can I help?", Corrected: "Hello, how-"}
+	ch := make(chan agent.Event, 4)
+	ch <- agent.AgentTurn{Text: "Hello, how can I help?"}
+	ch <- agent.UserTurn{Text: "What are your hours?"}
+	ch <- agent.Correction{Original: "Hello, how can I help?", Corrected: "Hello, how-"}
 	close(ch)
 
 	turns, got := newTestTurnLog("call-a")
@@ -278,8 +296,8 @@ func TestDownlinkRecordsTurns(t *testing.T) {
 
 func TestBridgeClientErrorFatal(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
-	conv.events <- elevenlabs.AudioEvent{PCM: []byte("a"), EventID: 1}
-	conv.events <- elevenlabs.ClientError{Code: 1008, ErrorName: "rate_limited", Message: "too many"}
+	conv.events <- agent.Audio{PCM: []byte("a"), EventID: 1}
+	conv.events <- agent.Error{Code: 1008, Name: "rate_limited", Message: "too many"}
 	// The events channel stays open: bridge must end the conversation itself.
 
 	err := runBridge(t, context.Background(), rm, conv)

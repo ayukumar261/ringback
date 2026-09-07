@@ -10,8 +10,8 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
-	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
 )
 
 const (
@@ -30,16 +30,8 @@ type roomHandle interface {
 	Close() error
 }
 
-// convHandle is the slice of elevenlabs.Conversation the bridge needs.
-type convHandle interface {
-	SendAudio(pcm []byte) error
-	Events() <-chan elevenlabs.Event
-	Err() error
-	Close() error
-}
-
 // bridge pumps audio both ways and tears both sides down when either ends.
-func bridge(ctx context.Context, rm roomHandle, conv convHandle, turns *turnLog, log *slog.Logger) error {
+func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *turnLog, log *slog.Logger) error {
 	// The room dying must unblock the event pump below.
 	watchDone := make(chan struct{})
 	go func() {
@@ -96,26 +88,26 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 }
 
 // downlink applies agent events to the room until the events close or a fatal server error.
-func downlink(events <-chan elevenlabs.Event, rm roomHandle, turns *turnLog, log *slog.Logger) error {
+func downlink(events <-chan agent.Event, rm roomHandle, turns *turnLog, log *slog.Logger) error {
 	for ev := range events {
 		switch e := ev.(type) {
-		case elevenlabs.AudioEvent:
+		case agent.Audio:
 			rm.Enqueue(e.PCM)
-		case elevenlabs.Interruption:
+		case agent.Interruption:
 			rm.Flush()
 			log.Info("caller barge-in", "event_id", e.EventID)
-		case elevenlabs.UserTranscript:
+		case agent.UserTurn:
 			turns.caller(e.Text)
 			log.Info("caller said", "text", e.Text)
-		case elevenlabs.AgentResponse:
+		case agent.AgentTurn:
 			turns.agent(e.Text)
 			log.Info("agent said", "text", e.Text)
-		case elevenlabs.AgentResponseCorrection:
+		case agent.Correction:
 			turns.correct(e.Corrected)
 			log.Info("agent cut off", "corrected", e.Corrected)
-		case elevenlabs.ClientError:
-			return fmt.Errorf("session: agent error: %s: %s", e.ErrorName, e.Message)
-		case elevenlabs.UnknownEvent:
+		case agent.Error:
+			return fmt.Errorf("session: agent error: %s: %s", e.Name, e.Message)
+		case agent.Unknown:
 			raw := e.Raw
 			if len(raw) > 200 {
 				raw = raw[:200]

@@ -6,13 +6,15 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 )
 
 // Conversation is one live agent call over a websocket.
 type Conversation struct {
 	conn     *websocket.Conn
 	meta     InitMetadata
-	events   chan Event
+	events   chan agent.Event
 	ctx      context.Context
 	cancel   context.CancelFunc
 	pumpDone chan struct{}
@@ -28,7 +30,7 @@ func newConversation(parent context.Context, conn *websocket.Conn, meta InitMeta
 	c := &Conversation{
 		conn:     conn,
 		meta:     meta,
-		events:   make(chan Event, eventsBuffer),
+		events:   make(chan agent.Event, eventsBuffer),
 		ctx:      ctx,
 		cancel:   cancel,
 		pumpDone: make(chan struct{}),
@@ -49,8 +51,20 @@ func (c *Conversation) SendAudio(pcm []byte) error {
 	return c.conn.Write(c.ctx, websocket.MessageText, frame)
 }
 
-// Events returns server events in arrival order until the conversation ends.
-func (c *Conversation) Events() <-chan Event { return c.events }
+// SendTool answers one tool call from the agent.
+func (c *Conversation) SendTool(id, result string, isErr bool) error {
+	if c.ctx.Err() != nil {
+		return net.ErrClosed
+	}
+	frame, err := EncodeToolResult(id, result, isErr)
+	if err != nil {
+		return err
+	}
+	return c.conn.Write(c.ctx, websocket.MessageText, frame)
+}
+
+// Events returns agent events in arrival order until the conversation ends.
+func (c *Conversation) Events() <-chan agent.Event { return c.events }
 
 // Meta reports the metadata announced by the server at handshake.
 func (c *Conversation) Meta() InitMetadata { return c.meta }
@@ -82,13 +96,17 @@ func (c *Conversation) pump() {
 			c.terminate(err)
 			return
 		}
-		ev, err := ParseServerEvent(data)
+		env, err := decodeFrame(data)
 		if err != nil {
 			c.terminate(err)
 			return
 		}
-		if p, ok := ev.(pingEvent); ok {
-			frame, err := EncodePong(p.EventID)
+		if env.Type == "ping" {
+			if env.Ping == nil {
+				c.terminate(errMissingPayload(env.Type, "ping_event"))
+				return
+			}
+			frame, err := EncodePong(env.Ping.EventID)
 			if err == nil {
 				err = c.conn.Write(c.ctx, websocket.MessageText, frame)
 			}
@@ -97,6 +115,11 @@ func (c *Conversation) pump() {
 				return
 			}
 			continue
+		}
+		ev, err := env.event(data)
+		if err != nil {
+			c.terminate(err)
+			return
 		}
 		select {
 		case c.events <- ev:

@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 )
 
 func TestClassify(t *testing.T) {

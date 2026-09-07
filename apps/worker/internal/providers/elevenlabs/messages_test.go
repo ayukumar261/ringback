@@ -3,29 +3,15 @@ package elevenlabs
 import (
 	"reflect"
 	"testing"
+
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 )
 
 var parseGolden = []struct {
 	name string
 	json string
-	want Event
+	want agent.Event
 }{
-	{
-		name: "conversation_initiation_metadata",
-		json: `{
-			"type": "conversation_initiation_metadata",
-			"conversation_initiation_metadata_event": {
-				"conversation_id": "conv_abc123",
-				"agent_output_audio_format": "pcm_48000",
-				"user_input_audio_format": "pcm_48000"
-			}
-		}`,
-		want: InitMetadata{
-			ConversationID:         "conv_abc123",
-			AgentOutputAudioFormat: "pcm_48000",
-			UserInputAudioFormat:   "pcm_48000",
-		},
-	},
 	{
 		name: "audio minimal",
 		json: `{
@@ -35,7 +21,7 @@ var parseGolden = []struct {
 				"event_id": 7
 			}
 		}`,
-		want: AudioEvent{PCM: []byte("RIFF"), EventID: 7},
+		want: agent.Audio{PCM: []byte("RIFF"), EventID: 7},
 	},
 	{
 		name: "audio with alignment and is_final dropped",
@@ -52,52 +38,47 @@ var parseGolden = []struct {
 				"is_final": false
 			}
 		}`,
-		want: AudioEvent{PCM: []byte("Hi"), EventID: 1},
-	},
-	{
-		name: "ping",
-		json: `{"type": "ping", "ping_event": {"event_id": 42, "ping_ms": 50}}`,
-		want: pingEvent{EventID: 42},
+		want: agent.Audio{PCM: []byte("Hi"), EventID: 1},
 	},
 	{
 		name: "interruption with event_id (API reference shape)",
 		json: `{"type": "interruption", "interruption_event": {"event_id": 12}}`,
-		want: Interruption{EventID: 12},
+		want: agent.Interruption{EventID: 12},
 	},
 	{
 		name: "interruption with reason (guide shape)",
 		json: `{"type": "interruption", "interruption_event": {"reason": "user interrupt"}}`,
-		want: Interruption{Reason: "user interrupt"},
+		want: agent.Interruption{Reason: "user interrupt"},
 	},
 	{
 		name: "interruption with both fields",
 		json: `{"type": "interruption", "interruption_event": {"event_id": 12, "reason": "user interrupt"}}`,
-		want: Interruption{EventID: 12, Reason: "user interrupt"},
+		want: agent.Interruption{EventID: 12, Reason: "user interrupt"},
 	},
 	{
 		name: "interruption with empty payload",
 		json: `{"type": "interruption", "interruption_event": {}}`,
-		want: Interruption{},
+		want: agent.Interruption{},
 	},
 	{
 		name: "interruption with no payload survives",
 		json: `{"type": "interruption"}`,
-		want: Interruption{},
+		want: agent.Interruption{},
 	},
 	{
 		name: "user_transcript",
 		json: `{"type": "user_transcript", "user_transcription_event": {"user_transcript": "I'd like to check my order", "event_id": 3}}`,
-		want: UserTranscript{Text: "I'd like to check my order", EventID: 3},
+		want: agent.UserTurn{Text: "I'd like to check my order", EventID: 3},
 	},
 	{
 		name: "user_transcript without event_id (guide shape)",
 		json: `{"type": "user_transcript", "user_transcription_event": {"user_transcript": "hello"}}`,
-		want: UserTranscript{Text: "hello"},
+		want: agent.UserTurn{Text: "hello"},
 	},
 	{
 		name: "agent_response",
 		json: `{"type": "agent_response", "agent_response_event": {"agent_response": "Sure, can I get your order number?", "event_id": 4}}`,
-		want: AgentResponse{Text: "Sure, can I get your order number?", EventID: 4},
+		want: agent.AgentTurn{Text: "Sure, can I get your order number?", EventID: 4},
 	},
 	{
 		name: "agent_response_correction",
@@ -109,7 +90,7 @@ var parseGolden = []struct {
 				"event_id": 5
 			}
 		}`,
-		want: AgentResponseCorrection{
+		want: agent.Correction{
 			Original:  "Sure, can I get your order number?",
 			Corrected: "Sure, can I get your—",
 			EventID:   5,
@@ -118,17 +99,17 @@ var parseGolden = []struct {
 	{
 		name: "client_error nests under error_event",
 		json: `{"type": "client_error", "error_event": {"code": 1008, "error_name": "rate_limited", "message": "Too many concurrent conversations"}}`,
-		want: ClientError{Code: 1008, ErrorName: "rate_limited", Message: "Too many concurrent conversations"},
+		want: agent.Error{Code: 1008, Name: "rate_limited", Message: "Too many concurrent conversations"},
 	},
 	{
 		name: "client_error without optional message",
 		json: `{"type": "client_error", "error_event": {"code": 1000, "error_name": "internal_error"}}`,
-		want: ClientError{Code: 1000, ErrorName: "internal_error"},
+		want: agent.Error{Code: 1000, Name: "internal_error"},
 	},
 	{
 		name: "vad_score is unknown in v1",
 		json: `{"type": "vad_score", "vad_score_event": {"vad_score": 0.95}}`,
-		want: UnknownEvent{Type: "vad_score"},
+		want: agent.Unknown{Type: "vad_score"},
 	},
 	{
 		name: "client_tool_call is unknown in v1",
@@ -142,12 +123,12 @@ var parseGolden = []struct {
 				"expects_response": true
 			}
 		}`,
-		want: UnknownEvent{Type: "client_tool_call"},
+		want: agent.Unknown{Type: "client_tool_call"},
 	},
 	{
 		name: "future event type",
 		json: `{"type": "totally_new_event", "some_new_payload": {"x": 1}}`,
-		want: UnknownEvent{Type: "totally_new_event"},
+		want: agent.Unknown{Type: "totally_new_event"},
 	},
 }
 
@@ -159,7 +140,7 @@ func TestParseServerEventGolden(t *testing.T) {
 				t.Fatalf("ParseServerEvent: %v", err)
 			}
 			want := tt.want
-			if u, ok := want.(UnknownEvent); ok {
+			if u, ok := want.(agent.Unknown); ok {
 				u.Raw = []byte(tt.json)
 				want = u
 			}
@@ -177,8 +158,6 @@ func TestParseServerEventErrors(t *testing.T) {
 		{"non-object frame", `[1,2,3]`},
 		{"audio missing payload", `{"type":"audio"}`},
 		{"audio invalid base64", `{"type":"audio","audio_event":{"audio_base_64":"!!!","event_id":9}}`},
-		{"ping missing payload", `{"type":"ping"}`},
-		{"metadata missing payload", `{"type":"conversation_initiation_metadata"}`},
 		{"transcript missing payload", `{"type":"user_transcript"}`},
 		{"agent_response missing payload", `{"type":"agent_response"}`},
 		{"correction missing payload", `{"type":"agent_response_correction"}`},
@@ -197,6 +176,19 @@ func TestParseServerEventErrors(t *testing.T) {
 	}
 }
 
+func TestParseServerEventControlFrames(t *testing.T) {
+	// Ping and init metadata are intercepted by the transport and never become agent events.
+	for _, raw := range []string{`{"type":"ping","ping_event":{"event_id":42}}`, metaFrame("conv_1", "pcm_48000", "pcm_48000")} {
+		ev, err := ParseServerEvent([]byte(raw))
+		if err != nil {
+			t.Fatalf("ParseServerEvent(%s): %v", raw, err)
+		}
+		if _, ok := ev.(agent.Unknown); !ok {
+			t.Fatalf("ParseServerEvent(%s) = %#v, want agent.Unknown", raw, ev)
+		}
+	}
+}
+
 func TestEncodeGolden(t *testing.T) {
 	tests := []struct {
 		name string
@@ -207,6 +199,16 @@ func TestEncodeGolden(t *testing.T) {
 			name: "pong",
 			got:  func() ([]byte, error) { return EncodePong(42) },
 			want: `{"type":"pong","event_id":42}`,
+		},
+		{
+			name: "tool result",
+			got:  func() ([]byte, error) { return EncodeToolResult("call_123", "sent", false) },
+			want: `{"type":"client_tool_result","tool_call_id":"call_123","result":"sent","is_error":false}`,
+		},
+		{
+			name: "tool result error",
+			got:  func() ([]byte, error) { return EncodeToolResult("call_123", "no such tool", true) },
+			want: `{"type":"client_tool_result","tool_call_id":"call_123","result":"no such tool","is_error":true}`,
 		},
 		{
 			name: "audio chunk has no type field",

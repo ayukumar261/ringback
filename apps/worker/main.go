@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/dispatch"
-	"github.com/ayukumar261/ringback/apps/worker/internal/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 	"github.com/ayukumar261/ringback/apps/worker/internal/webhook"
