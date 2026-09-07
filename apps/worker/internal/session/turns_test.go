@@ -19,12 +19,12 @@ func newTestTurnLog(room string) (*turnLog, *[]events.Turn) {
 func TestTurnLogNumbersRolesInOrder(t *testing.T) {
 	tl, turns := newTestTurnLog("call-a")
 	tl.agent("Hello!")
-	tl.caller("Hi, I need help.")
+	tl.user("Hi, I need help.")
 	tl.agent("Sure, with what?")
 
 	want := []events.Turn{
 		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Hello!", At: time.UnixMilli(1753795200000)},
-		{Room: "call-a", Seq: 2, Role: events.RoleCaller, Text: "Hi, I need help.", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 2, Role: events.RoleUser, Text: "Hi, I need help.", At: time.UnixMilli(1753795200000)},
 		{Room: "call-a", Seq: 3, Role: events.RoleAgent, Text: "Sure, with what?", At: time.UnixMilli(1753795200000)},
 	}
 	if !slices.Equal(*turns, want) {
@@ -36,7 +36,7 @@ func TestTurnLogCorrectionReemitsNewestAgentSeq(t *testing.T) {
 	tl, turns := newTestTurnLog("call-a")
 	tl.agent("Let me read you the full terms and cond-")
 	tl.correct("Let me read")
-	tl.caller("No thanks.")
+	tl.user("No thanks.")
 
 	seqs := make([]int, 0, len(*turns))
 	for _, turn := range *turns {
@@ -55,5 +55,21 @@ func TestTurnLogCorrectionBeforeAnyAgentTurnDropped(t *testing.T) {
 	tl.correct("stray")
 	if len(*turns) != 0 {
 		t.Fatalf("turns = %v, want none", *turns)
+	}
+}
+
+func TestTurnLogCorrectionAfterToolTurnRewritesAgentTurn(t *testing.T) {
+	tl, turns := newTestTurnLog("call-a")
+	tl.agent("Press one for-")
+	tl.tool("pressed 1")
+	tl.correct("Press one")
+
+	want := []events.Turn{
+		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Press one for-", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 2, Role: events.RoleTool, Text: "pressed 1", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Press one", At: time.UnixMilli(1753795200000)},
+	}
+	if !slices.Equal(*turns, want) {
+		t.Fatalf("turns = %v, want %v", *turns, want)
 	}
 }

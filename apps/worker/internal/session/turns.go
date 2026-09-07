@@ -20,15 +20,20 @@ func newTurnLog(room string, sink func(events.Turn)) *turnLog {
 	return &turnLog{room: room, sink: sink, now: time.Now, next: 1}
 }
 
-// caller records what the caller said.
-func (t *turnLog) caller(text string) {
-	t.emit(t.take(), events.RoleCaller, text)
+// user records what the person on the other end of the call said.
+func (t *turnLog) user(text string) {
+	t.emit(t.take(), events.RoleUser, text)
 }
 
 // agent records what the agent said.
 func (t *turnLog) agent(text string) {
 	t.lastAgent = t.take()
 	t.emit(t.lastAgent, events.RoleAgent, text)
+}
+
+// tool records something the agent did on the call rather than said.
+func (t *turnLog) tool(text string) {
+	t.emit(t.take(), events.RoleTool, text)
 }
 
 // correct re-emits the newest agent turn with what was actually said before the cut-off.

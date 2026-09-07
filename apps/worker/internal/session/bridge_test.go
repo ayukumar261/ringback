@@ -352,7 +352,7 @@ func TestDownlinkRecordsTurns(t *testing.T) {
 	}
 	want := []events.Turn{
 		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Hello, how can I help?", At: time.UnixMilli(1753795200000)},
-		{Room: "call-a", Seq: 2, Role: events.RoleCaller, Text: "What are your hours?", At: time.UnixMilli(1753795200000)},
+		{Room: "call-a", Seq: 2, Role: events.RoleUser, Text: "What are your hours?", At: time.UnixMilli(1753795200000)},
 		{Room: "call-a", Seq: 1, Role: events.RoleAgent, Text: "Hello, how-", At: time.UnixMilli(1753795200000)},
 	}
 	if !slices.Equal(*got, want) {
@@ -364,7 +364,8 @@ func TestDownlinkRunsSendDTMF(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
 	conv.queue(agent.Tool{ID: "c1", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)})
 
-	if err := downlink(conv, rm, discardTurns(), instant, discard); err != nil {
+	turns, recorded := newTestTurnLog("call-a")
+	if err := downlink(conv, rm, turns, instant, discard); err != nil {
 		t.Fatalf("downlink = %v", err)
 	}
 	ops, _ := rm.snapshot()
@@ -374,6 +375,12 @@ func TestDownlinkRunsSendDTMF(t *testing.T) {
 	want := []toolResult{{id: "c1", result: "pressed 1", isErr: false}}
 	if got := conv.results(); !slices.Equal(got, want) {
 		t.Fatalf("results = %v, want %v", got, want)
+	}
+	wantTurns := []events.Turn{
+		{Room: "call-a", Seq: 1, Role: events.RoleTool, Text: "pressed 1", At: time.UnixMilli(1753795200000)},
+	}
+	if !slices.Equal(*recorded, wantTurns) {
+		t.Fatalf("turns = %v, want %v", *recorded, wantTurns)
 	}
 }
 
@@ -402,11 +409,15 @@ func TestDownlinkToolErrors(t *testing.T) {
 			rm.dtmfErr = tt.dtmfErr
 			conv.queue(tt.call)
 
-			if err := downlink(conv, rm, discardTurns(), instant, discard); err != nil {
+			turns, recorded := newTestTurnLog("call-a")
+			if err := downlink(conv, rm, turns, instant, discard); err != nil {
 				t.Fatalf("downlink = %v", err)
 			}
 			if ops, _ := rm.snapshot(); len(ops) != 0 {
 				t.Fatalf("ops = %v, want none", ops)
+			}
+			if len(*recorded) != 0 {
+				t.Fatalf("turns = %v, want none for a failed press", *recorded)
 			}
 			got := conv.results()
 			if len(got) != 1 {
@@ -433,9 +444,9 @@ func TestDownlinkToolResultErrClosedBenign(t *testing.T) {
 }
 
 // startAnswer runs answerTool in the background and returns its result channel.
-func startAnswer(rm *fakeRoom, conv *fakeConv, call agent.Tool, after clock) <-chan error {
+func startAnswer(rm *fakeRoom, conv *fakeConv, turns *turnLog, call agent.Tool, after clock) <-chan error {
 	done := make(chan error, 1)
-	go func() { done <- answerTool(conv, rm, call, after, discard) }()
+	go func() { done <- answerTool(conv, rm, turns, call, after, discard) }()
 	return done
 }
 
@@ -454,11 +465,15 @@ func awaitAnswer(t *testing.T, done <-chan error) {
 
 func TestAnswerToolHoldsUntilTonesFinish(t *testing.T) {
 	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
-	done := startAnswer(rm, conv, agent.Tool{ID: "c7", Name: "send_dtmf", Params: []byte(`{"digits":"1234"}`)}, clk.after)
+	turns, recorded := newTestTurnLog("call-a")
+	done := startAnswer(rm, conv, turns, agent.Tool{ID: "c7", Name: "send_dtmf", Params: []byte(`{"digits":"1234"}`)}, clk.after)
 
 	waitFor(t, func() bool { return len(clk.asked()) == 1 })
 	if ops, _ := rm.snapshot(); !slices.Equal(ops, []string{"dtmf:1234"}) {
 		t.Fatalf("ops = %v, want the press before the hold", ops)
+	}
+	if got := *recorded; len(got) != 1 || got[0].Role != events.RoleTool || got[0].Text != "pressed 1234" {
+		t.Fatalf("turns = %v, want the tool turn recorded before the hold", got)
 	}
 	if got := clk.asked(); got[0] != 2*time.Second {
 		t.Fatalf("hold = %v, want %v", got[0], 2*time.Second)
@@ -482,7 +497,7 @@ func TestAnswerToolHoldsUntilTonesFinish(t *testing.T) {
 
 func TestAnswerToolHoldEndsWithRoom(t *testing.T) {
 	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
-	done := startAnswer(rm, conv, agent.Tool{ID: "c8", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
+	done := startAnswer(rm, conv, discardTurns(), agent.Tool{ID: "c8", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
 
 	waitFor(t, func() bool { return len(clk.asked()) == 1 })
 	rm.kill(nil)
@@ -495,7 +510,7 @@ func TestAnswerToolHoldEndsWithRoom(t *testing.T) {
 func TestAnswerToolNoHoldOnFailure(t *testing.T) {
 	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
 	rm.dtmfErr = errors.New("room: send dtmf: room closed")
-	done := startAnswer(rm, conv, agent.Tool{ID: "c9", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
+	done := startAnswer(rm, conv, discardTurns(), agent.Tool{ID: "c9", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)}, clk.after)
 
 	awaitAnswer(t, done)
 	if got := clk.asked(); len(got) != 0 {

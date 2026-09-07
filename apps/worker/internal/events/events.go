@@ -37,15 +37,16 @@ type End struct {
 
 // Turn roles.
 const (
-	RoleCaller = "caller"
-	RoleAgent  = "agent"
+	RoleUser  = "user"
+	RoleAgent = "agent"
+	RoleTool  = "tool"
 )
 
 // Turn is one utterance in a call's transcript.
 type Turn struct {
 	Room string
 	Seq  int    // 1-based position within the call; a repeated Seq corrects earlier text
-	Role string // RoleCaller or RoleAgent
+	Role string // RoleUser, RoleAgent, or RoleTool
 	Text string
 	At   time.Time
 }

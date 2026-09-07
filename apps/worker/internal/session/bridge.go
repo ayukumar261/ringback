@@ -101,8 +101,8 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after cloc
 			rm.Flush()
 			log.Info("caller barge-in", "event_id", e.EventID)
 		case agent.UserTurn:
-			turns.caller(e.Text)
-			log.Info("caller said", "text", e.Text)
+			turns.user(e.Text)
+			log.Info("user said", "text", e.Text)
 		case agent.AgentTurn:
 			turns.agent(e.Text)
 			log.Info("agent said", "text", e.Text)
@@ -110,7 +110,7 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after cloc
 			turns.correct(e.Corrected)
 			log.Info("agent cut off", "corrected", e.Corrected)
 		case agent.Tool:
-			if err := answerTool(conv, rm, e, after, log); err != nil {
+			if err := answerTool(conv, rm, turns, e, after, log); err != nil {
 				return err
 			}
 		case agent.Error:
@@ -127,13 +127,15 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after cloc
 }
 
 // answerTool runs one tool call and replies once its tones have played, treating a closed conversation as benign.
-func answerTool(conv agent.Conversation, rm roomHandle, call agent.Tool, after clock, log *slog.Logger) error {
+func answerTool(conv agent.Conversation, rm roomHandle, turns *turnLog, call agent.Tool, after clock, log *slog.Logger) error {
 	result, hold, err := runTool(rm, call)
 	if err != nil {
 		log.Warn("tool failed", "tool", call.Name, "err", err)
 		err = conv.SendTool(call.ID, err.Error(), true)
 	} else {
 		log.Info("tool ran", "tool", call.Name, "result", result, "hold", hold)
+		// Record the press now so the transcript does not wait out the hold.
+		turns.tool(result)
 		// Answering early would let the agent talk over the tones still on the wire.
 		if hold > 0 {
 			select {
