@@ -121,12 +121,29 @@ describe("decodeCallEvent", () => {
       room: "r1",
       ended_at: "1722300060000",
       duration_ms: "60000",
+      audio: "r1.wav",
     });
     expect(Either.getOrThrow(ev)).toEqual({
       event: "call.ended",
       room: "r1",
       ended_at: 1722300060000,
       duration_ms: 60000,
+      audio: "r1.wav",
+    });
+  });
+
+  it("decodes call.ended without audio", () => {
+    const ev = decode({
+      event: "call.ended",
+      room: "r1",
+      ended_at: "1",
+      duration_ms: "1",
+    });
+    expect(Either.getOrThrow(ev)).toEqual({
+      event: "call.ended",
+      room: "r1",
+      ended_at: 1,
+      duration_ms: 1,
     });
   });
 

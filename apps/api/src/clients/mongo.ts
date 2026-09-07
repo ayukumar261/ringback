@@ -13,6 +13,7 @@ export interface CallDoc {
   startedAt?: Date;
   endedAt?: Date;
   durationMs?: number;
+  audio?: string;
 }
 
 // TurnDoc is one transcript turn, unique per (room, seq).

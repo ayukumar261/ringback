@@ -20,6 +20,7 @@ type Opts struct {
 	LiveKitAPISecret string
 	Agent            agent.Provider
 	Events           *events.Publisher // nil publishes nothing
+	AudioDir         string            // directory for call recordings
 	Log              *slog.Logger      // nil means slog.Default()
 }
 
@@ -39,6 +40,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		APIKey:    opts.LiveKitAPIKey,
 		APISecret: opts.LiveKitAPISecret,
 		RoomName:  roomName,
+		AudioDir:  opts.AudioDir,
 		Log:       log,
 	})
 	if err != nil {
@@ -79,6 +81,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		Room:     roomName,
 		At:       time.Now(),
 		Duration: elapsed,
+		Audio:    rm.AudioFile(),
 	})
 	return err
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/dispatch"
-	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
+	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/session"
 	"github.com/ayukumar261/ringback/apps/worker/internal/webhook"
 )
@@ -34,6 +34,10 @@ func main() {
 	lkSecret := mustEnv("LIVEKIT_API_SECRET", log)
 	elKey := mustEnv("ELEVENLABS_API_KEY", log)
 	elAgent := mustEnv("ELEVENLABS_AGENT_ID", log)
+	audioDir := os.Getenv("AUDIO_DIR")
+	if audioDir == "" {
+		log.Warn("AUDIO_DIR not set; calls will not be recorded")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -63,6 +67,7 @@ func main() {
 		LiveKitAPISecret: lkSecret,
 		Agent:            &elevenlabs.Client{APIKey: elKey, AgentID: elAgent},
 		Events:           pub,
+		AudioDir:         audioDir,
 		Log:              log,
 	}, dispatch.Config{Log: log})
 

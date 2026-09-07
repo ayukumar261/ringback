@@ -7,6 +7,7 @@ export const CallEnded = Schema.Struct({
   room: Schema.NonEmptyString,
   ended_at: Schema.NumberFromString,
   duration_ms: Schema.NumberFromString,
+  audio: Schema.optional(Schema.String),
 });
 export type CallEnded = typeof CallEnded.Type;
 
@@ -20,6 +21,7 @@ export const applyCallEnded = (mongo: MongoClient, ev: CallEnded) =>
           status: "ended" as const,
           endedAt: new Date(ev.ended_at),
           durationMs: ev.duration_ms,
+          audio: ev.audio ?? "",
         },
       },
       { upsert: true },

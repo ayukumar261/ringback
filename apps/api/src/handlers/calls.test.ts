@@ -215,6 +215,7 @@ const endedDoc: CallDoc = {
   startedAt: new Date(2000),
   endedAt: new Date(62000),
   durationMs: 60000,
+  audio: "r-b.wav",
 };
 
 describe("listCalls", () => {
@@ -231,6 +232,7 @@ describe("listCalls", () => {
         started_at: 2000,
         ended_at: 62000,
         duration_ms: 60000,
+        audio: "r-b.wav",
       },
       {
         room: "r-a",

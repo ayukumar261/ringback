@@ -69,7 +69,7 @@ func TestCallEndedValues(t *testing.T) {
 	p := New(fake, nil)
 
 	at := time.UnixMilli(1753795321456)
-	p.CallEnded(End{Room: "call-a", At: at, Duration: 121 * time.Second})
+	p.CallEnded(End{Room: "call-a", At: at, Duration: 121 * time.Second, Audio: "call-a.wav"})
 
 	values := fake.args[0].Values.(map[string]any)
 	want := map[string]any{
@@ -77,6 +77,7 @@ func TestCallEndedValues(t *testing.T) {
 		"room":        "call-a",
 		"ended_at":    "1753795321456",
 		"duration_ms": "121000",
+		"audio":       "call-a.wav",
 	}
 	for k, v := range want {
 		if values[k] != v {

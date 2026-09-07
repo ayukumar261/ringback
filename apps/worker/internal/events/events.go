@@ -34,6 +34,7 @@ type End struct {
 	Room     string
 	At       time.Time
 	Duration time.Duration
+	Audio    string
 }
 
 // Turn roles.
@@ -113,6 +114,7 @@ func (p *Publisher) CallEnded(e End) {
 		"room":        e.Room,
 		"ended_at":    strconv.FormatInt(e.At.UnixMilli(), 10),
 		"duration_ms": strconv.FormatInt(e.Duration.Milliseconds(), 10),
+		"audio":       e.Audio,
 	})
 }
 
