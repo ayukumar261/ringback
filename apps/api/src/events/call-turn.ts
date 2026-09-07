@@ -6,7 +6,7 @@ export const CallTurn = Schema.Struct({
   event: Schema.Literal("call.turn"),
   room: Schema.NonEmptyString,
   seq: Schema.NumberFromString,
-  role: Schema.Literal("caller", "agent"),
+  role: Schema.Literal("user", "agent", "tool"),
   text: Schema.String,
   at: Schema.NumberFromString,
 });

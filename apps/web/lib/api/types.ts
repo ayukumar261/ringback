@@ -19,7 +19,7 @@ export interface Call {
 export interface Turn {
   room: string
   seq: number
-  role: "caller" | "agent"
+  role: "user" | "agent" | "tool"
   text: string
   at: number // unix ms
 }

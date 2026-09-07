@@ -34,7 +34,7 @@ const turnDocs: TurnDoc[] = [
   {
     room: "r-a",
     seq: 2,
-    role: "caller",
+    role: "user",
     text: "What are your hours?",
     at: new Date(4000),
   },
@@ -55,7 +55,7 @@ describe("listTurns", () => {
       {
         room: "r-a",
         seq: 2,
-        role: "caller",
+        role: "user",
         text: "What are your hours?",
         at: 4000,
       },

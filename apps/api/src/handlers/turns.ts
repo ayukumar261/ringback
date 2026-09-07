@@ -6,7 +6,7 @@ import { MongoClient } from "../clients/mongo.js";
 export const TurnSnapshot = Schema.Struct({
   room: Schema.String,
   seq: Schema.Number,
-  role: Schema.Literal("caller", "agent"),
+  role: Schema.Literal("user", "agent", "tool"),
   text: Schema.String,
   at: Schema.DateFromNumber,
 });

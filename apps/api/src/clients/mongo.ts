@@ -18,7 +18,7 @@ export interface CallDoc {
 export interface TurnDoc {
   room: string;
   seq: number;
-  role: "caller" | "agent";
+  role: "user" | "agent" | "tool";
   text: string;
   at: Date;
 }

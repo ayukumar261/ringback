@@ -77,6 +77,18 @@ describe("decodeCallEvent", () => {
     });
   });
 
+  it("decodes a call.turn with the tool role", () => {
+    const ev = decode({
+      event: "call.turn",
+      room: "r1",
+      seq: "3",
+      role: "tool",
+      text: "pressed 1",
+      at: "1722300030000",
+    });
+    expect(Either.isRight(ev)).toBe(true);
+  });
+
   it("rejects a call.turn with an unknown role", () => {
     const ev = decode({
       event: "call.turn",
@@ -94,7 +106,7 @@ describe("decodeCallEvent", () => {
       event: "call.turn",
       room: "r1",
       seq: "first",
-      role: "caller",
+      role: "user",
       text: "hi",
       at: "1",
     });
