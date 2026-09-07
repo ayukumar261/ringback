@@ -44,6 +44,7 @@ function applyEvent(
           status: "ended",
           ended_at: event.ended_at,
           duration_ms: event.duration_ms,
+          audio: event.audio ?? "",
         }
   return [...prev.filter((c) => c.room !== event.room), next].sort(
     byStartedAtDesc

@@ -5,6 +5,7 @@ import { useState } from "react"
 import { useCalls } from "@/hooks/use-calls"
 import { useCallsStream } from "@/hooks/use-calls-stream"
 import { useTurns } from "@/hooks/use-turns"
+import { audioUrl } from "@/lib/api/config"
 import type { Call } from "@/lib/api/types"
 import { cn } from "@/lib/utils"
 
@@ -90,6 +91,23 @@ function Prompt({ prompt }: { prompt?: string }) {
   )
 }
 
+// Player plays the call's recording, and nothing while the call is live or recording was off.
+function Player({ call }: { call: Call }) {
+  if (!call.audio) return null
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="text-muted-foreground">audio</h2>
+      <audio
+        key={call.room}
+        controls
+        preload="metadata"
+        src={audioUrl(call.room)}
+        className="w-full max-w-xl"
+      />
+    </section>
+  )
+}
+
 // Transcript shows the selected call's turns as one JSON array, kept live by useCallsStream.
 function Transcript({ room }: { room: string }) {
   const { data, error, isLoading } = useTurns(room)
@@ -149,6 +167,7 @@ export default function Page() {
             <>
               <CallDetails call={selected} />
               <Prompt prompt={selected.prompt} />
+              <Player call={selected} />
               <Transcript room={selected.room} />
             </>
           ) : (

@@ -14,6 +14,7 @@ export interface Call {
   started_at?: number // unix ms
   ended_at?: number // unix ms
   duration_ms?: number
+  audio?: string // recording file name, set on call.ended and empty when recording was off
 }
 
 // Turn is one transcript turn as served by GET /calls/:room/turns.
@@ -43,6 +44,7 @@ export interface CallEndedEvent {
   room: string
   ended_at: number
   duration_ms: number
+  audio?: string
 }
 
 // CallTurnEvent mirrors the call.turn SSE payload; a repeated seq corrects earlier text.
