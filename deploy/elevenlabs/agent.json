@@ -11,7 +11,7 @@
           "end_call": {
             "type": "system",
             "name": "end_call",
-            "description": "Ends the call. Call this whenever the other side says goodbye in any form, asks to end the call, or asks not to be called again, and when the task is finished. Briefly acknowledge, then call it. Never just say goodbye and leave the line open.",
+            "description": "Ends the call. Call this whenever the other side says goodbye in any form, asks to end the call, or asks not to be called again, and when the prompt says the call is finished. Briefly acknowledge, then call it. Never just say goodbye and leave the line open.",
             "response_timeout_secs": 20,
             "disable_interruptions": false,
             "interruption_mode": "allow",
@@ -39,6 +39,22 @@
         }
       }
     }
+  },
+  "workflow": {
+    "edges": {},
+    "nodes": {
+      "start_node": {
+        "type": "start",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "edge_order": [],
+        "parent_subgraph_id": null
+      }
+    },
+    "subgraphs": {},
+    "prevent_subagent_loops": false
   },
   "tools": [
     {
