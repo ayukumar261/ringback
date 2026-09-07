@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestPaceWritesOneFramePerTick(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- pace(ctx, tick, buf, enc, write) }()
+	go func() { done <- pace(ctx, tick, buf, enc, nil, write) }()
 	for range 3 {
 		tick <- time.Time{}
 	}
@@ -70,8 +71,54 @@ func TestPaceStopsOnWriteError(t *testing.T) {
 	tick := make(chan time.Time, 1)
 	tick <- time.Time{}
 
-	err = pace(context.Background(), tick, audio.NewPlayoutBuffer(), enc, func([]byte) error { return boom })
+	err = pace(context.Background(), tick, audio.NewPlayoutBuffer(), enc, nil, func([]byte) error { return boom })
 	if !errors.Is(err, boom) {
 		t.Fatalf("pace returned %v, want boom", err)
+	}
+}
+
+func TestPaceRecordsBothSides(t *testing.T) {
+	enc, err := audio.NewEncoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, path := newTestTap(t, discard)
+	rec.offer(toneFrame(highHz)) // the caller spoke once before the first tick
+	buf := audio.NewPlayoutBuffer()
+	buf.Push(toneFrame(lowHz)) // the agent has one frame queued
+
+	tick := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- pace(ctx, tick, buf, enc, rec, func([]byte) error { return nil }) }()
+	for range 3 {
+		tick <- time.Time{}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("pace returned %v", err)
+	}
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := b[44:]
+	if len(data) != 3*2*audio.FrameBytes {
+		t.Fatalf("recorded %d bytes, want three stereo frames", len(data))
+	}
+	left, right := deinterleave(data[:2*audio.FrameBytes])
+	if c := crossings(left); c < 45 {
+		t.Errorf("frame 0 left has %d crossings, want the caller's high tone", c)
+	}
+	if c, e := crossings(right), rms(right); c > 35 || e < 1000 {
+		t.Errorf("frame 0 right has %d crossings and rms %.0f, want the agent's low tone", c, e)
+	}
+	left, right = deinterleave(data[2*2*audio.FrameBytes:])
+	if l, r := rms(left), rms(right); l != 0 || r != 0 {
+		t.Errorf("frame 2 has rms %.0f left and %.0f right, want silence on both sides", l, r)
 	}
 }

@@ -19,19 +19,21 @@ func (r *Room) paceLoop() {
 	write := func(packet []byte) error {
 		return r.track.WriteSample(media.Sample{Data: packet, Duration: audio.FrameDuration}, &lksdk.SampleWriteOptions{})
 	}
-	if err := pace(r.ctx, ticker.C, r.buf, r.enc, write); err != nil {
+	if err := pace(r.ctx, ticker.C, r.buf, r.enc, r.tap, write); err != nil {
 		r.terminate(fmt.Errorf("room: agent track: %w", err))
 	}
 }
 
-// pace encodes and writes one playout frame per tick until ctx ends or a write fails.
-func pace(ctx context.Context, tick <-chan time.Time, buf *audio.PlayoutBuffer, enc *audio.Encoder, write func([]byte) error) error {
+// pace records, encodes, and writes one playout frame per tick until ctx ends or a write fails.
+func pace(ctx context.Context, tick <-chan time.Time, buf *audio.PlayoutBuffer, enc *audio.Encoder, rec *tap, write func([]byte) error) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-tick:
-			packet, err := enc.Encode(buf.ReadFrame())
+			frame := buf.ReadFrame()
+			rec.record(frame)
+			packet, err := enc.Encode(frame)
 			if err != nil {
 				return err
 			}

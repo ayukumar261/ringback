@@ -23,15 +23,15 @@ func (r *Room) readLoop(track *webrtc.TrackRemote) {
 		pkt, _, err := track.ReadRTP()
 		return pkt, err
 	}
-	err := inbound(r.ctx, read, track.Codec().ClockRate, r.dec, r.callerPCM, r.log)
+	err := inbound(r.ctx, read, track.Codec().ClockRate, r.dec, r.callerPCM, r.tap, r.log)
 	if r.ctx.Err() != nil {
 		return
 	}
 	r.terminate(fmt.Errorf("room: caller track: %w", err))
 }
 
-// inbound turns caller RTP into ordered PCM on out until read fails or ctx ends.
-func inbound(ctx context.Context, read func() (*rtp.Packet, error), clockRate uint32, dec *audio.Decoder, out chan<- []byte, log *slog.Logger) error {
+// inbound turns caller RTP into ordered PCM on out and the recorder until read fails or ctx ends.
+func inbound(ctx context.Context, read func() (*rtp.Packet, error), clockRate uint32, dec *audio.Decoder, out chan<- []byte, rec *tap, log *slog.Logger) error {
 	sb := samplebuilder.New(maxLatePackets, &codecs.OpusPacket{}, clockRate)
 	for {
 		pkt, err := read()
@@ -49,6 +49,7 @@ func inbound(ctx context.Context, read func() (*rtp.Packet, error), clockRate ui
 				log.Warn("dropping undecodable caller packet", "err", err)
 				continue
 			}
+			rec.offer(pcm)
 			select {
 			case out <- pcm:
 			case <-ctx.Done():

@@ -146,7 +146,7 @@ func TestInboundDecodesInOrder(t *testing.T) {
 	}
 	out := make(chan []byte, callerPCMBuffer)
 
-	err = inbound(context.Background(), scriptedRead(pkts, io.EOF), audio.SampleRate, dec, out, discard)
+	err = inbound(context.Background(), scriptedRead(pkts, io.EOF), audio.SampleRate, dec, out, nil, discard)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("inbound returned %v, want io.EOF", err)
 	}
@@ -163,7 +163,7 @@ func TestInboundReordersPackets(t *testing.T) {
 	}
 	out := make(chan []byte, callerPCMBuffer)
 
-	err = inbound(context.Background(), scriptedRead(swapped, io.EOF), audio.SampleRate, dec, out, discard)
+	err = inbound(context.Background(), scriptedRead(swapped, io.EOF), audio.SampleRate, dec, out, nil, discard)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("inbound returned %v, want io.EOF", err)
 	}
@@ -180,7 +180,7 @@ func TestInboundSurvivesCorruptPacket(t *testing.T) {
 	}
 	out := make(chan []byte, callerPCMBuffer)
 
-	err = inbound(context.Background(), scriptedRead(pkts, io.EOF), audio.SampleRate, dec, out, discard)
+	err = inbound(context.Background(), scriptedRead(pkts, io.EOF), audio.SampleRate, dec, out, nil, discard)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("inbound returned %v, want io.EOF", err)
 	}
@@ -195,7 +195,7 @@ func TestInboundPropagatesReadError(t *testing.T) {
 	boom := errors.New("boom")
 	out := make(chan []byte, 1)
 
-	if err := inbound(context.Background(), scriptedRead(nil, boom), audio.SampleRate, dec, out, discard); !errors.Is(err, boom) {
+	if err := inbound(context.Background(), scriptedRead(nil, boom), audio.SampleRate, dec, out, nil, discard); !errors.Is(err, boom) {
 		t.Fatalf("inbound returned %v, want boom", err)
 	}
 }
@@ -219,11 +219,38 @@ func TestInboundExitsOnCancelWhenBlocked(t *testing.T) {
 	out := make(chan []byte, 1) // fills after the first decoded frame
 
 	done := make(chan error, 1)
-	go func() { done <- inbound(ctx, blockingRead, audio.SampleRate, dec, out, discard) }()
+	go func() { done <- inbound(ctx, blockingRead, audio.SampleRate, dec, out, nil, discard) }()
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("inbound did not exit after cancel")
+	}
+}
+
+func TestInboundOffersTap(t *testing.T) {
+	low, high := toneFrame(lowHz), toneFrame(highHz)
+	pkts := buildPackets(t, [][]byte{low, high})
+	dec, err := audio.NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make(chan []byte, callerPCMBuffer)
+	rec, _ := newTestTap(t, discard)
+	defer rec.close()
+
+	err = inbound(context.Background(), scriptedRead(pkts, io.EOF), audio.SampleRate, dec, out, rec, discard)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("inbound returned %v, want io.EOF", err)
+	}
+	wantTones(t, collect(out), []bool{false, true})
+	rec.mu.Lock()
+	got := rec.caller
+	rec.mu.Unlock()
+	if got == nil {
+		t.Fatal("tap slot is empty, want the last decoded caller frame")
+	}
+	if c := crossings(got); c < 45 {
+		t.Errorf("tap slot has %d crossings, want the high tone that arrived last", c)
 	}
 }

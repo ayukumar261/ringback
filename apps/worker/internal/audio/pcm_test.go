@@ -53,3 +53,49 @@ func TestPCMConversionExhaustive(t *testing.T) {
 		}
 	}
 }
+
+// padded copies s into a full frame of samples, leaving the rest zero.
+func padded(s []int16) []int16 {
+	out := make([]int16, FrameSamples)
+	copy(out, s)
+	return out
+}
+
+func TestInterleave(t *testing.T) {
+	full := make([]int16, FrameSamples)
+	neg := make([]int16, FrameSamples)
+	for i := range full {
+		full[i] = int16(i + 1)
+		neg[i] = -int16(i + 1)
+	}
+	long := append(append([]int16{}, full...), 7, 7, 7)
+	for _, tt := range []struct {
+		name         string
+		left, right  []int16
+		wantL, wantR []int16
+	}{
+		{"both full", full, neg, full, neg},
+		{"nil right is silent", full, nil, full, padded(nil)},
+		{"short left padded", full[:10], neg, padded(full[:10]), neg},
+		{"long left truncated", long, neg, full, neg},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out := Interleave(int16ToPCM(tt.left), int16ToPCM(tt.right))
+			if len(out) != 2*FrameBytes {
+				t.Fatalf("stereo frame is %d bytes, want %d", len(out), 2*FrameBytes)
+			}
+			s := pcmToInt16(out, nil)
+			var l, r []int16
+			for i := 0; i < len(s); i += 2 {
+				l = append(l, s[i])
+				r = append(r, s[i+1])
+			}
+			if !reflect.DeepEqual(l, tt.wantL) {
+				t.Errorf("left channel mismatch, first samples %v", l[:12])
+			}
+			if !reflect.DeepEqual(r, tt.wantR) {
+				t.Errorf("right channel mismatch, first samples %v", r[:12])
+			}
+		})
+	}
+}

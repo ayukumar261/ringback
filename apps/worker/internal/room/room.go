@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
+	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
 )
 
 const (
@@ -28,6 +30,7 @@ type Opts struct {
 	APISecret string
 	RoomName  string
 	Identity  string // empty means ringback-worker
+	AudioDir  string // empty means no recording
 	Log       *slog.Logger
 }
 
@@ -40,6 +43,8 @@ type Room struct {
 	dec       *audio.Decoder
 	buf       *audio.PlayoutBuffer
 	callerPCM chan []byte
+	tap       *tap
+	audio     string
 	done      chan struct{}
 	answered  chan struct{}
 	ctx       context.Context
@@ -111,6 +116,16 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		return nil, fmt.Errorf("room: connect: %w", err)
 	}
 	r.room = lkroom
+	if opts.AudioDir != "" {
+		w, err := wav.NewWriter(filepath.Join(opts.AudioDir, opts.RoomName+".wav"), audio.SampleRate, 2)
+		if err != nil {
+			lkroom.Disconnect()
+			cancel()
+			return nil, fmt.Errorf("room: open audio: %w", err)
+		}
+		r.tap = newTap(w, log)
+		r.audio = opts.RoomName + ".wav"
+	}
 	go r.closer()
 
 	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus})
@@ -167,6 +182,9 @@ func (r *Room) Enqueue(pcm []byte) {
 // Flush drops all queued agent audio on a barge-in.
 func (r *Room) Flush() { r.buf.Flush() }
 
+// AudioFile reports the recording's file name inside AudioDir, empty when recording is off.
+func (r *Room) AudioFile() string { return r.audio }
+
 // Buffered reports how much queued agent audio has not yet played out.
 func (r *Room) Buffered() time.Duration { return r.buf.Buffered() }
 
@@ -217,6 +235,9 @@ func (r *Room) closer() {
 	}
 	r.room.Disconnect()
 	r.wg.Wait()
+	if err := r.tap.close(); err != nil {
+		r.log.Warn("closing call audio", "err", err)
+	}
 	close(r.callerPCM)
 	close(r.done)
 }
