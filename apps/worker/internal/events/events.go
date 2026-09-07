@@ -25,6 +25,7 @@ type Start struct {
 	From           string // caller's number, empty if the SIP participant was not visible
 	To             string // dialed number, empty likewise
 	Direction      string // room.DirectionInbound or room.DirectionOutbound, empty if unknown
+	Prompt         string // the prompt the placer sent, empty on inbound
 	At             time.Time
 }
 
@@ -82,6 +83,7 @@ func (p *Publisher) CallStarted(s Start) {
 		"from":            s.From,
 		"to":              s.To,
 		"direction":       s.Direction,
+		"prompt":          s.Prompt,
 		"started_at":      strconv.FormatInt(s.At.UnixMilli(), 10),
 	})
 }

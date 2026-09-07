@@ -116,6 +116,7 @@ export const CallSnapshot = Schema.Struct({
   from: Schema.optional(Schema.String),
   to: Schema.optional(Schema.String),
   direction: Schema.optional(Schema.String),
+  prompt: Schema.optional(Schema.String),
   startedAt: Schema.optional(Schema.DateFromNumber).pipe(
     Schema.fromKey("started_at"),
   ),
@@ -167,11 +168,18 @@ const OUTBOUND_TRUNK_NAME = "twilio-outbound";
 // ApiKey is the shared secret guarding call placement, and leaving it unset disables the endpoint.
 const ApiKey = Config.option(Config.string("RINGBACK_API_KEY"));
 
-// PlaceCall is the POST /calls body carrying one E.164 destination.
+// PROMPT_MAX bounds the prompt so one call cannot bloat the participant attribute, the stream entry, or the call doc.
+const PROMPT_MAX = 16_000;
+
+// PlaceCall is the POST /calls body, one E.164 destination and the prompt the call runs on.
 const PlaceCall = Schema.Struct({
   to: Schema.String.pipe(Schema.pattern(/^\+[1-9]\d{6,14}$/)),
+  prompt: Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(PROMPT_MAX)),
 });
 const decodeBody = Schema.decodeUnknown(PlaceCall);
+
+// BODY_ERROR names both fields, since a decode failure does not say which one broke.
+const BODY_ERROR = `to must be E.164, like +15551234567, and prompt must be a non-empty string of at most ${PROMPT_MAX} characters`;
 
 // Sip is the slice of the LiveKit client that placing a call needs.
 export type Sip = Pick<SipClient, "listSipOutboundTrunk" | "createSipParticipant">;
@@ -210,7 +218,7 @@ export const place = (
     const parsed = yield* decodeBody(body).pipe(Effect.either);
     if (parsed._tag === "Left") {
       return yield* HttpServerResponse.json(
-        { error: "to must be E.164, like +15551234567" },
+        { error: BODY_ERROR },
         { status: 400 },
       );
     }
@@ -230,7 +238,10 @@ export const place = (
     yield* Effect.tryPromise(() =>
       sip.createSipParticipant(trunk.sipTrunkId, parsed.right.to, room, {
         participantIdentity: "sip-outbound",
-        participantAttributes: { "ringback.direction": "outbound" },
+        participantAttributes: {
+          "ringback.direction": "outbound",
+          "ringback.prompt": parsed.right.prompt,
+        },
       }),
     );
     yield* Effect.logInfo(`calls: dialing ${parsed.right.to} in ${room}`);

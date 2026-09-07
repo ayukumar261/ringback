@@ -6,26 +6,39 @@ import "github.com/livekit/protocol/livekit"
 const (
 	// AttrDirection is the participant attribute set by the dispatch rule (inbound) or the outbound placer.
 	AttrDirection = "ringback.direction"
+	// AttrPrompt is the participant attribute carrying the prompt the outbound placer sent, absent on inbound.
+	AttrPrompt = "ringback.prompt"
 	// DirectionInbound marks a call someone placed to us.
 	DirectionInbound = "inbound"
 	// DirectionOutbound marks a call we placed.
 	DirectionOutbound = "outbound"
 )
 
-// Caller reports the call's from and to numbers and its direction, all empty until a SIP participant is visible.
-func (r *Room) Caller() (from, to, direction string) {
+// Caller is what the SIP participant says about the call.
+type Caller struct {
+	From      string // caller's number, empty if hidden
+	To        string // dialed number, empty likewise
+	Direction string // DirectionInbound or DirectionOutbound
+	Prompt    string // the placer's prompt, verbatim, empty on inbound
+}
+
+// Caller reports the call's numbers, direction, and prompt, all empty until a SIP participant is visible.
+func (r *Room) Caller() Caller {
 	for _, rp := range r.room.GetRemoteParticipants() {
 		if attrs := rp.Attributes(); attrs[livekit.AttrSIPCallID] != "" {
 			return caller(attrs)
 		}
 	}
-	return "", "", ""
+	return Caller{}
 }
 
-// caller maps one SIP participant's attributes to from/to/direction; anything but an explicit outbound reads as inbound.
-func caller(attrs map[string]string) (from, to, direction string) {
+// caller maps one SIP participant's attributes to a Caller; anything but an explicit outbound reads as inbound.
+func caller(attrs map[string]string) Caller {
+	c := Caller{Prompt: attrs[AttrPrompt]}
 	if attrs[AttrDirection] == DirectionOutbound {
-		return attrs[livekit.AttrSIPTrunkNumber], attrs[livekit.AttrSIPPhoneNumber], DirectionOutbound
+		c.From, c.To, c.Direction = attrs[livekit.AttrSIPTrunkNumber], attrs[livekit.AttrSIPPhoneNumber], DirectionOutbound
+		return c
 	}
-	return attrs[livekit.AttrSIPPhoneNumber], attrs[livekit.AttrSIPTrunkNumber], DirectionInbound
+	c.From, c.To, c.Direction = attrs[livekit.AttrSIPPhoneNumber], attrs[livekit.AttrSIPTrunkNumber], DirectionInbound
+	return c
 }

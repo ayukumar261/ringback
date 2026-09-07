@@ -79,6 +79,17 @@ function CallDetails({ call }: { call: Call }) {
   return <pre>{JSON.stringify(display, null, 2)}</pre>
 }
 
+// Prompt shows what the calling agent asked for, and nothing on inbound calls.
+function Prompt({ prompt }: { prompt?: string }) {
+  if (!prompt) return null
+  return (
+    <section className="flex flex-col gap-4">
+      <h2 className="text-muted-foreground">prompt</h2>
+      <pre className="whitespace-pre-wrap">{prompt}</pre>
+    </section>
+  )
+}
+
 // Transcript shows the selected call's turns as one JSON array, kept live by useCallsStream.
 function Transcript({ room }: { room: string }) {
   const { data, error, isLoading } = useTurns(room)
@@ -137,6 +148,7 @@ export default function Page() {
           {selected !== undefined ? (
             <>
               <CallDetails call={selected} />
+              <Prompt prompt={selected.prompt} />
               <Transcript room={selected.room} />
             </>
           ) : (

@@ -163,34 +163,32 @@ func errMissingPayload(typ, key string) error {
 	return fmt.Errorf("elevenlabs: %s frame missing %s payload", typ, key)
 }
 
-// InitData is the first frame the client sends.
-type InitData struct {
-	ConfigOverride   *ConfigOverride `json:"conversation_config_override,omitempty"`
-	DynamicVariables map[string]any  `json:"dynamic_variables,omitempty"`
-	UserID           string          `json:"user_id,omitempty"`
+// initFrame is the first frame the client sends, carrying whatever settings belong to this call.
+type initFrame struct {
+	Type   string      `json:"type"`
+	Config *callConfig `json:"conversation_config_override,omitempty"`
 }
 
-// ConfigOverride adjusts the agent's settings for one call.
-type ConfigOverride struct {
-	Agent *AgentOverride `json:"agent,omitempty"`
-	TTS   *TTSOverride   `json:"tts,omitempty"`
+// callConfig is the slice of agent settings a call may bring with it.
+type callConfig struct {
+	Agent *agentConfig `json:"agent,omitempty"`
 }
 
-type AgentOverride struct {
-	FirstMessage string `json:"first_message,omitempty"`
-	Language     string `json:"language,omitempty"`
+type agentConfig struct {
+	Prompt *agentPrompt `json:"prompt,omitempty"`
 }
 
-type TTSOverride struct {
-	VoiceID string `json:"voice_id,omitempty"`
+type agentPrompt struct {
+	Prompt string `json:"prompt"`
 }
 
-// EncodeInitData builds the conversation_initiation_client_data frame.
-func EncodeInitData(d InitData) ([]byte, error) {
-	return json.Marshal(struct {
-		Type string `json:"type"`
-		InitData
-	}{Type: "conversation_initiation_client_data", InitData: d})
+// encodeInit builds the conversation_initiation_client_data frame, leaving the dashboard prompt in charge when the call has none.
+func encodeInit(s agent.Start) ([]byte, error) {
+	f := initFrame{Type: "conversation_initiation_client_data"}
+	if s.Prompt != "" {
+		f.Config = &callConfig{Agent: &agentConfig{Prompt: &agentPrompt{Prompt: s.Prompt}}}
+	}
+	return json.Marshal(f)
 }
 
 // EncodeAudioChunk builds a user_audio_chunk frame from raw PCM.

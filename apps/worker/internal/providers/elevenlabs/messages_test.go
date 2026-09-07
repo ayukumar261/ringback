@@ -219,36 +219,14 @@ func TestEncodeGolden(t *testing.T) {
 			want: `{"user_audio_chunk":""}`,
 		},
 		{
-			name: "init data zero value is minimal",
-			got:  func() ([]byte, error) { return EncodeInitData(InitData{}) },
+			name: "init without a prompt is minimal",
+			got:  func() ([]byte, error) { return encodeInit(agent.Start{}) },
 			want: `{"type":"conversation_initiation_client_data"}`,
 		},
 		{
-			name: "init data empty map still minimal",
-			got: func() ([]byte, error) {
-				return EncodeInitData(InitData{DynamicVariables: map[string]any{}})
-			},
-			want: `{"type":"conversation_initiation_client_data"}`,
-		},
-		{
-			name: "init data with user id only",
-			got: func() ([]byte, error) {
-				return EncodeInitData(InitData{UserID: "caller-42"})
-			},
-			want: `{"type":"conversation_initiation_client_data","user_id":"caller-42"}`,
-		},
-		{
-			name: "init data full",
-			got: func() ([]byte, error) {
-				return EncodeInitData(InitData{
-					ConfigOverride: &ConfigOverride{
-						Agent: &AgentOverride{FirstMessage: "Hey, thanks for calling."},
-					},
-					DynamicVariables: map[string]any{"caller_number": "+15551234567"},
-					UserID:           "caller-42",
-				})
-			},
-			want: `{"type":"conversation_initiation_client_data","conversation_config_override":{"agent":{"first_message":"Hey, thanks for calling."}},"dynamic_variables":{"caller_number":"+15551234567"},"user_id":"caller-42"}`,
+			name: "init carries the call's prompt",
+			got:  func() ([]byte, error) { return encodeInit(agent.Start{Prompt: "Be brief."}) },
+			want: `{"type":"conversation_initiation_client_data","conversation_config_override":{"agent":{"prompt":{"prompt":"Be brief."}}}}`,
 		},
 	}
 	for _, tt := range tests {

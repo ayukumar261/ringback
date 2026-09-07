@@ -9,6 +9,7 @@ export interface CallDoc {
   from?: string;
   to?: string;
   direction?: string;
+  prompt?: string;
   startedAt?: Date;
   endedAt?: Date;
   durationMs?: number;

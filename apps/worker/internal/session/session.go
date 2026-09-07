@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
-	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
 	"github.com/ayukumar261/ringback/apps/worker/internal/room"
 )
 
@@ -18,16 +18,15 @@ type Opts struct {
 	LiveKitURL       string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
-	EL               *elevenlabs.Client
-	Init             elevenlabs.InitData // per-call overrides, usually zero
-	Events           *events.Publisher   // nil publishes nothing
-	Log              *slog.Logger        // nil means slog.Default()
+	Agent            agent.Provider
+	Events           *events.Publisher // nil publishes nothing
+	Log              *slog.Logger      // nil means slog.Default()
 }
 
 // Run bridges roomName to one agent conversation and blocks until the call ends.
 func Run(ctx context.Context, roomName string, opts Opts) error {
-	if roomName == "" || opts.EL == nil {
-		return fmt.Errorf("session: run needs a room name and an agent client")
+	if roomName == "" || opts.Agent == nil {
+		return fmt.Errorf("session: run needs a room name and an agent provider")
 	}
 	log := opts.Log
 	if log == nil {
@@ -53,22 +52,24 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		}
 		return setupErr(ctx, err)
 	}
-	conv, err := opts.EL.Start(ctx, elevenlabs.StartOpts{Init: opts.Init})
+	// the answered SIP participant carries the direction and, on outbound, the prompt the call runs on
+	c := rm.Caller()
+	conv, err := opts.Agent.Start(ctx, agent.Start{Prompt: c.Prompt})
 	if err != nil {
 		rm.Close()
 		return setupErr(ctx, err)
 	}
 
 	start := time.Now()
-	log = log.With("conversation", conv.Meta().ConversationID)
-	log.Info("session started")
-	from, to, direction := rm.Caller()
+	log = log.With("conversation", conv.ID())
+	log.Info("session started", "direction", c.Direction, "prompt_len", len(c.Prompt))
 	opts.Events.CallStarted(events.Start{
 		Room:           roomName,
-		ConversationID: conv.Meta().ConversationID,
-		From:           from,
-		To:             to,
-		Direction:      direction,
+		ConversationID: conv.ID(),
+		From:           c.From,
+		To:             c.To,
+		Direction:      c.Direction,
+		Prompt:         c.Prompt,
 		At:             start,
 	})
 	err = bridge(ctx, rm, conv, newTurnLog(roomName, opts.Events.CallTurn), time.After, log)

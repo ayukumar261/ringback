@@ -1,7 +1,10 @@
 // Package agent is the bridge's provider-neutral view of one voice agent conversation.
 package agent
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Event is one thing the agent told us during a conversation.
 type Event interface{ isEvent() }
@@ -73,8 +76,19 @@ type Tool struct {
 
 func (Tool) isEvent() {}
 
+// Start is what the bridge hands a provider once the call is answered.
+type Start struct {
+	Prompt string // the call's prompt, empty means the provider's own default prompt runs
+}
+
+// Provider opens conversations with one voice agent.
+type Provider interface {
+	Start(ctx context.Context, s Start) (Conversation, error)
+}
+
 // Conversation is one live agent call as the bridge sees it.
 type Conversation interface {
+	ID() string // the provider's identifier for this conversation
 	SendAudio(pcm []byte) error
 	SendTool(id, result string, isErr bool) error
 	Events() <-chan Event

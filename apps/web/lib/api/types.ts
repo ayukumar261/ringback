@@ -10,6 +10,7 @@ export interface Call {
   from?: string
   to?: string
   direction?: string
+  prompt?: string
   started_at?: number // unix ms
   ended_at?: number // unix ms
   duration_ms?: number
@@ -32,6 +33,7 @@ export interface CallStartedEvent {
   from?: string
   to?: string
   direction?: string
+  prompt?: string
   started_at: number
 }
 

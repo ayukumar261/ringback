@@ -10,9 +10,7 @@ func TestCaller(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		attrs map[string]string
-		from  string
-		to    string
-		dir   string
+		want  Caller
 	}{
 		{
 			name: "inbound by absence",
@@ -20,7 +18,7 @@ func TestCaller(t *testing.T) {
 				livekit.AttrSIPPhoneNumber: "+14155550100",
 				livekit.AttrSIPTrunkNumber: "+17627013110",
 			},
-			from: "+14155550100", to: "+17627013110", dir: DirectionInbound,
+			want: Caller{From: "+14155550100", To: "+17627013110", Direction: DirectionInbound},
 		},
 		{
 			name: "inbound declared",
@@ -29,7 +27,7 @@ func TestCaller(t *testing.T) {
 				livekit.AttrSIPPhoneNumber: "+14155550100",
 				livekit.AttrSIPTrunkNumber: "+17627013110",
 			},
-			from: "+14155550100", to: "+17627013110", dir: DirectionInbound,
+			want: Caller{From: "+14155550100", To: "+17627013110", Direction: DirectionInbound},
 		},
 		{
 			name: "outbound swaps from and to",
@@ -38,7 +36,7 @@ func TestCaller(t *testing.T) {
 				livekit.AttrSIPPhoneNumber: "+14155550100",
 				livekit.AttrSIPTrunkNumber: "+17627013110",
 			},
-			from: "+17627013110", to: "+14155550100", dir: DirectionOutbound,
+			want: Caller{From: "+17627013110", To: "+14155550100", Direction: DirectionOutbound},
 		},
 		{
 			name: "unknown value reads as inbound",
@@ -47,18 +45,36 @@ func TestCaller(t *testing.T) {
 				livekit.AttrSIPPhoneNumber: "+14155550100",
 				livekit.AttrSIPTrunkNumber: "+17627013110",
 			},
-			from: "+14155550100", to: "+17627013110", dir: DirectionInbound,
+			want: Caller{From: "+14155550100", To: "+17627013110", Direction: DirectionInbound},
 		},
 		{
 			name:  "outbound with hidden numbers",
 			attrs: map[string]string{AttrDirection: DirectionOutbound},
-			from:  "", to: "", dir: DirectionOutbound,
+			want:  Caller{Direction: DirectionOutbound},
+		},
+		{
+			name: "outbound carries the prompt verbatim",
+			attrs: map[string]string{
+				AttrDirection:              DirectionOutbound,
+				AttrPrompt:                 "  Order a large pepperoni.\n",
+				livekit.AttrSIPPhoneNumber: "+14155550100",
+				livekit.AttrSIPTrunkNumber: "+17627013110",
+			},
+			want: Caller{From: "+17627013110", To: "+14155550100", Direction: DirectionOutbound, Prompt: "  Order a large pepperoni.\n"},
+		},
+		{
+			name: "inbound has no prompt",
+			attrs: map[string]string{
+				AttrDirection:              DirectionInbound,
+				livekit.AttrSIPPhoneNumber: "+14155550100",
+				livekit.AttrSIPTrunkNumber: "+17627013110",
+			},
+			want: Caller{From: "+14155550100", To: "+17627013110", Direction: DirectionInbound},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			from, to, dir := caller(tt.attrs)
-			if from != tt.from || to != tt.to || dir != tt.dir {
-				t.Fatalf("caller() = (%q, %q, %q), want (%q, %q, %q)", from, to, dir, tt.from, tt.to, tt.dir)
+			if got := caller(tt.attrs); got != tt.want {
+				t.Fatalf("caller() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

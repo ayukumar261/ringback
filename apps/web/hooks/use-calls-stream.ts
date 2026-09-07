@@ -37,6 +37,7 @@ function applyEvent(
           from: event.from ?? "",
           to: event.to ?? "",
           direction: event.direction ?? "",
+          prompt: event.prompt ?? "",
         }
       : {
           ...(existing ?? { room: event.room }),

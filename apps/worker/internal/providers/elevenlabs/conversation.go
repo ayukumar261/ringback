@@ -66,6 +66,9 @@ func (c *Conversation) SendTool(id, result string, isErr bool) error {
 // Events returns agent events in arrival order until the conversation ends.
 func (c *Conversation) Events() <-chan agent.Event { return c.events }
 
+// ID reports the conversation id ElevenLabs assigned at handshake.
+func (c *Conversation) ID() string { return c.meta.ConversationID }
+
 // Meta reports the metadata announced by the server at handshake.
 func (c *Conversation) Meta() InitMetadata { return c.meta }
 

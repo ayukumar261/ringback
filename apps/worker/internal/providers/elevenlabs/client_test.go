@@ -86,6 +86,15 @@ func expectInit(t *testing.T, ctx context.Context, conn *websocket.Conn) map[str
 	return m
 }
 
+// promptOf digs the call's prompt out of a decoded init frame, empty when absent.
+func promptOf(m map[string]any) string {
+	cfg, _ := m["conversation_config_override"].(map[string]any)
+	ag, _ := cfg["agent"].(map[string]any)
+	pr, _ := ag["prompt"].(map[string]any)
+	s, _ := pr["prompt"].(string)
+	return s
+}
+
 func sendRaw(t *testing.T, ctx context.Context, conn *websocket.Conn, s string) {
 	t.Helper()
 	if err := conn.Write(ctx, websocket.MessageText, []byte(s)); err != nil {
@@ -112,19 +121,19 @@ func audioFrame(pcm []byte, id int) string {
 func TestStartHappyPath(t *testing.T) {
 	state, client := newFake(t, func(ctx context.Context, conn *websocket.Conn) {
 		m := expectInit(t, ctx, conn)
-		if m["user_id"] != "caller-42" {
-			t.Errorf("init user_id = %v", m["user_id"])
+		if got := promptOf(m); got != "Be brief." {
+			t.Errorf("init prompt = %q", got)
 		}
 		sendRaw(t, ctx, conn, metaFrame("conv_1", "pcm_48000", "pcm_48000"))
 		sendRaw(t, ctx, conn, audioFrame([]byte("hi"), 1))
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), StartOpts{Init: InitData{UserID: "caller-42"}})
+	conv, err := client.Start(t.Context(), agent.Start{Prompt: "Be brief."})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if conv.Meta().ConversationID != "conv_1" {
-		t.Fatalf("meta = %+v", conv.Meta())
+	if conv.ID() != "conv_1" {
+		t.Fatalf("id = %q", conv.ID())
 	}
 	ev := <-conv.Events()
 	audio, ok := ev.(agent.Audio)
@@ -151,7 +160,7 @@ func TestFormatMismatch(t *testing.T) {
 		sendRaw(t, ctx, conn, metaFrame("conv_1", "pcm_48000", "ulaw_8000"))
 		waitClose(ctx, conn)
 	})
-	_, err := client.Start(t.Context(), StartOpts{})
+	_, err := client.Start(t.Context(), agent.Start{})
 	if err == nil || !strings.Contains(err.Error(), "ulaw_8000") || !strings.Contains(err.Error(), "pcm_48000") {
 		t.Fatalf("err = %v", err)
 	}
@@ -164,7 +173,7 @@ func TestHandshakeRejected(t *testing.T) {
 			sendRaw(t, ctx, conn, `{"type":"client_error","error_event":{"code":1008,"error_name":"rate_limited","message":"too many"}}`)
 			waitClose(ctx, conn)
 		})
-		_, err := client.Start(t.Context(), StartOpts{})
+		_, err := client.Start(t.Context(), agent.Start{})
 		if err == nil || !strings.Contains(err.Error(), "rate_limited") {
 			t.Fatalf("err = %v", err)
 		}
@@ -175,7 +184,7 @@ func TestHandshakeRejected(t *testing.T) {
 			sendRaw(t, ctx, conn, `{"type":"conversation_initiation_metadata"}`)
 			waitClose(ctx, conn)
 		})
-		_, err := client.Start(t.Context(), StartOpts{})
+		_, err := client.Start(t.Context(), agent.Start{})
 		if err == nil || !strings.Contains(err.Error(), "missing conversation_initiation_metadata_event payload") {
 			t.Fatalf("err = %v", err)
 		}
@@ -186,7 +195,7 @@ func TestHandshakeRejected(t *testing.T) {
 			sendRaw(t, ctx, conn, `{"type":"agent_response","agent_response_event":{"agent_response":"hi","event_id":1}}`)
 			waitClose(ctx, conn)
 		})
-		_, err := client.Start(t.Context(), StartOpts{})
+		_, err := client.Start(t.Context(), agent.Start{})
 		if err == nil || !strings.Contains(err.Error(), "unexpected first frame") {
 			t.Fatalf("err = %v", err)
 		}
@@ -225,7 +234,7 @@ func TestSignedURLErrors(t *testing.T) {
 			hs := httptest.NewServer(mux)
 			t.Cleanup(hs.Close)
 			client := &Client{APIKey: "k", AgentID: "a", BaseURL: hs.URL, HTTPClient: hs.Client()}
-			_, err := client.Start(t.Context(), StartOpts{})
+			_, err := client.Start(t.Context(), agent.Start{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v", err)
 			}
@@ -240,7 +249,7 @@ func TestSignedURLPerStart(t *testing.T) {
 		waitClose(ctx, conn)
 	})
 	for i := range 2 {
-		conv, err := client.Start(t.Context(), StartOpts{})
+		conv, err := client.Start(t.Context(), agent.Start{})
 		if err != nil {
 			t.Fatalf("Start %d: %v", i, err)
 		}

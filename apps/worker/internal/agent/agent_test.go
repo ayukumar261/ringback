@@ -8,7 +8,10 @@ import (
 )
 
 // The ElevenLabs adapter is the one implementation the bridge is handed.
-var _ agent.Conversation = (*elevenlabs.Conversation)(nil)
+var (
+	_ agent.Provider     = (*elevenlabs.Client)(nil)
+	_ agent.Conversation = (*elevenlabs.Conversation)(nil)
+)
 
 func TestEventVocabulary(t *testing.T) {
 	// Every event type the bridge switches on must be part of the sealed set.

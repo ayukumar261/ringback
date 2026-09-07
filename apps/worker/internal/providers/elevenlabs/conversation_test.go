@@ -26,7 +26,7 @@ func TestPingPong(t *testing.T) {
 		}
 		conn.Close(websocket.StatusNormalClosure, "")
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestPingMissingPayload(t *testing.T) {
 		sendRaw(t, ctx, conn, `{"type":"ping"}`)
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestSendToolFrame(t *testing.T) {
 		}
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestAudioInterruptionOrder(t *testing.T) {
 		sendRaw(t, ctx, conn, audioFrame([]byte("c"), 4))
 		conn.Close(websocket.StatusNormalClosure, "")
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestServerCloseMidCall(t *testing.T) {
 		sendRaw(t, ctx, conn, audioFrame([]byte("x"), 1))
 		conn.Close(websocket.StatusInternalError, "boom")
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCtxCancel(t *testing.T) {
 		waitClose(ctx, conn)
 	})
 	ctx, cancel := context.WithCancel(t.Context())
-	conv, err := client.Start(ctx, StartOpts{})
+	conv, err := client.Start(ctx, agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestOversizedFrame(t *testing.T) {
 		sendRaw(t, ctx, conn, audioFrame(pcm, 1))
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestCloseIdempotentSendAfterClose(t *testing.T) {
 		sendRaw(t, ctx, conn, metaFrame("conv_1", "pcm_48000", "pcm_48000"))
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), StartOpts{})
+	conv, err := client.Start(t.Context(), agent.Start{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 )
 
 const (
@@ -22,25 +24,20 @@ const (
 
 // Client creates conversations with one ElevenLabs agent.
 type Client struct {
-	APIKey     string
-	AgentID    string
-	BaseURL    string
-	HTTPClient *http.Client
-}
-
-// StartOpts configures one conversation.
-type StartOpts struct {
-	Init         InitData
+	APIKey       string
+	AgentID      string
+	BaseURL      string
+	HTTPClient   *http.Client
 	InputFormat  string // empty means pcm_48000
 	OutputFormat string // empty means pcm_48000
 }
 
-// Start opens one conversation and returns once the handshake completes.
-func (c *Client) Start(ctx context.Context, opts StartOpts) (*Conversation, error) {
+// Start opens one conversation on the call's prompt and returns once the handshake completes.
+func (c *Client) Start(ctx context.Context, s agent.Start) (agent.Conversation, error) {
 	if c.APIKey == "" || c.AgentID == "" {
 		return nil, fmt.Errorf("elevenlabs: client needs APIKey and AgentID")
 	}
-	in, out := opts.InputFormat, opts.OutputFormat
+	in, out := c.InputFormat, c.OutputFormat
 	if in == "" {
 		in = defaultAudioFormat
 	}
@@ -61,7 +58,7 @@ func (c *Client) Start(ctx context.Context, opts StartOpts) (*Conversation, erro
 	}
 	conn.SetReadLimit(maxFrameBytes)
 
-	frame, err := EncodeInitData(opts.Init)
+	frame, err := encodeInit(s)
 	if err != nil {
 		conn.CloseNow()
 		return nil, err

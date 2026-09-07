@@ -201,7 +201,8 @@ const activeDoc: CallDoc = {
   conversationId: "conv-1",
   from: "+15550001111",
   to: "+15550002222",
-  direction: "inbound",
+  direction: "outbound",
+  prompt: "Order a pizza.",
   startedAt: new Date(1000),
 };
 
@@ -237,7 +238,8 @@ describe("listCalls", () => {
         conversation_id: "conv-1",
         from: "+15550001111",
         to: "+15550002222",
-        direction: "inbound",
+        direction: "outbound",
+        prompt: "Order a pizza.",
         started_at: 1000,
       },
     ]);
@@ -351,11 +353,14 @@ describe("authorized", () => {
   });
 });
 
+// BODY is a well-formed POST /calls body.
+const BODY = { to: "+15551234567", prompt: "Order a large pepperoni." };
+
 describe("place", () => {
   it("refuses everything while no key is configured", async () => {
     const { sip, dialed } = fakeSip(TRUNKS);
     const res = await Effect.runPromise(
-      place(sip, undefined, "Bearer k1", { to: "+15551234567" }),
+      place(sip, undefined, "Bearer k1", BODY),
     );
     expect(res.status).toBe(503);
     expect(dialed).toEqual([]);
@@ -364,9 +369,7 @@ describe("place", () => {
   it("rejects a missing or wrong key", async () => {
     const { sip, dialed } = fakeSip(TRUNKS);
     for (const header of [undefined, "Bearer wrong"]) {
-      const res = await Effect.runPromise(
-        place(sip, "k1", header, { to: "+15551234567" }),
-      );
+      const res = await Effect.runPromise(place(sip, "k1", header, BODY));
       expect(res.status).toBe(401);
     }
     expect(dialed).toEqual([]);
@@ -375,8 +378,29 @@ describe("place", () => {
   it("rejects a number that is not E.164", async () => {
     const { sip, dialed } = fakeSip(TRUNKS);
     for (const to of ["15551234567", "+1 555 123 4567", "", 42]) {
-      const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", { to }));
+      const res = await Effect.runPromise(
+        place(sip, "k1", "Bearer k1", { ...BODY, to }),
+      );
       expect(res.status).toBe(400);
+    }
+    expect(dialed).toEqual([]);
+  });
+
+  it("rejects a missing, blank, non-string, or oversize prompt", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    const bodies: unknown[] = [
+      { to: BODY.to },
+      { to: BODY.to, prompt: "" },
+      { to: BODY.to, prompt: " \n\t " },
+      { to: BODY.to, prompt: 42 },
+      { to: BODY.to, prompt: "x".repeat(16_001) },
+    ];
+    for (const body of bodies) {
+      const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", body));
+      expect(res.status).toBe(400);
+      expect(await HttpServerResponse.toWeb(res).json()).toEqual({
+        error: expect.stringContaining("prompt"),
+      });
     }
     expect(dialed).toEqual([]);
   });
@@ -392,18 +416,14 @@ describe("place", () => {
 
   it("answers 503 when the outbound trunk is missing", async () => {
     const { sip, dialed } = fakeSip([{ name: "other", sipTrunkId: "ST_other" }]);
-    const res = await Effect.runPromise(
-      place(sip, "k1", "Bearer k1", { to: "+15551234567" }),
-    );
+    const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", BODY));
     expect(res.status).toBe(503);
     expect(dialed).toEqual([]);
   });
 
-  it("dials through the named trunk into a call room marked outbound", async () => {
+  it("dials through the named trunk into a call room marked outbound with the prompt", async () => {
     const { sip, dialed } = fakeSip(TRUNKS);
-    const res = await Effect.runPromise(
-      place(sip, "k1", "Bearer k1", { to: "+15551234567" }),
-    );
+    const res = await Effect.runPromise(place(sip, "k1", "Bearer k1", BODY));
     expect(res.status).toBe(201);
     expect(dialed).toHaveLength(1);
     const dial = dialed[0]!;
@@ -412,6 +432,18 @@ describe("place", () => {
     expect(dial.room).toMatch(/^call_\+15551234567_[0-9a-f]{12}$/);
     expect(dial.opts?.participantAttributes).toEqual({
       "ringback.direction": "outbound",
+      "ringback.prompt": "Order a large pepperoni.",
     });
+  });
+
+  it("trims the prompt before pinning it on the participant", async () => {
+    const { sip, dialed } = fakeSip(TRUNKS);
+    const res = await Effect.runPromise(
+      place(sip, "k1", "Bearer k1", { ...BODY, prompt: "  Say hi.\n" }),
+    );
+    expect(res.status).toBe(201);
+    expect(dialed[0]?.opts?.participantAttributes?.["ringback.prompt"]).toBe(
+      "Say hi.",
+    );
   });
 });

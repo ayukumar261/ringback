@@ -9,6 +9,7 @@ export const CallStarted = Schema.Struct({
   from: Schema.optional(Schema.String),
   to: Schema.optional(Schema.String),
   direction: Schema.optional(Schema.String),
+  prompt: Schema.optional(Schema.String),
   started_at: Schema.NumberFromString,
 });
 export type CallStarted = typeof CallStarted.Type;
@@ -29,6 +30,7 @@ export const applyCallStarted = (mongo: MongoClient, ev: CallStarted) =>
           from: ev.from ?? "",
           to: ev.to ?? "",
           direction: ev.direction ?? "",
+          prompt: ev.prompt ?? "",
         },
       },
       { upsert: true },

@@ -61,7 +61,7 @@ func main() {
 		LiveKitURL:       lkURL,
 		LiveKitAPIKey:    lkKey,
 		LiveKitAPISecret: lkSecret,
-		EL:               &elevenlabs.Client{APIKey: elKey, AgentID: elAgent},
+		Agent:            &elevenlabs.Client{APIKey: elKey, AgentID: elAgent},
 		Events:           pub,
 		Log:              log,
 	}, dispatch.Config{Log: log})

@@ -179,6 +179,8 @@ func newFakeConv() *fakeConv {
 	return &fakeConv{events: make(chan agent.Event, 16)}
 }
 
+func (f *fakeConv) ID() string { return "conv-fake" }
+
 func (f *fakeConv) SendAudio(pcm []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

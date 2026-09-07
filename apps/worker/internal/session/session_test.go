@@ -8,8 +8,15 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/ayukumar261/ringback/apps/worker/internal/providers/elevenlabs"
+	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 )
+
+// noProvider is a provider that never opens a conversation.
+type noProvider struct{}
+
+func (noProvider) Start(context.Context, agent.Start) (agent.Conversation, error) {
+	return nil, errors.New("not today")
+}
 
 func TestClassify(t *testing.T) {
 	clientErr := errors.New("session: agent error: rate_limited: too many")
@@ -51,10 +58,10 @@ func TestClassify(t *testing.T) {
 }
 
 func TestRunValidation(t *testing.T) {
-	if err := Run(t.Context(), "", Opts{EL: &elevenlabs.Client{}}); err == nil {
+	if err := Run(t.Context(), "", Opts{Agent: noProvider{}}); err == nil {
 		t.Fatal("empty room name accepted")
 	}
 	if err := Run(t.Context(), "call-1", Opts{}); err == nil {
-		t.Fatal("nil client accepted")
+		t.Fatal("nil provider accepted")
 	}
 }
