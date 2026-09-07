@@ -59,6 +59,14 @@ type errorWire struct {
 	Message   string `json:"message"`
 }
 
+// toolCallWire is the client tool call payload as sent by the server.
+type toolCallWire struct {
+	ToolName   string          `json:"tool_name"`
+	ToolCallID string          `json:"tool_call_id"`
+	Parameters json.RawMessage `json:"parameters"`
+	EventID    int             `json:"event_id"`
+}
+
 // serverEnvelope is the outer shape of every server frame.
 type serverEnvelope struct {
 	Type           string            `json:"type"`
@@ -70,6 +78,7 @@ type serverEnvelope struct {
 	AgentResponse  *responseWire     `json:"agent_response_event"`
 	Correction     *correctionWire   `json:"agent_response_correction_event"`
 	ClientError    *errorWire        `json:"error_event"`
+	ToolCall       *toolCallWire     `json:"client_tool_call"`
 }
 
 // decodeFrame unmarshals the envelope so the transport can intercept control frames.
@@ -117,6 +126,15 @@ func (env serverEnvelope) event(raw []byte) (agent.Event, error) {
 			Original:  env.Correction.Original,
 			Corrected: env.Correction.Corrected,
 			EventID:   env.Correction.EventID,
+		}, nil
+	case "client_tool_call":
+		if env.ToolCall == nil {
+			return nil, errMissingPayload(env.Type, "client_tool_call")
+		}
+		return agent.Tool{
+			ID:     env.ToolCall.ToolCallID,
+			Name:   env.ToolCall.ToolName,
+			Params: env.ToolCall.Parameters,
 		}, nil
 	case "client_error":
 		if env.ClientError == nil {

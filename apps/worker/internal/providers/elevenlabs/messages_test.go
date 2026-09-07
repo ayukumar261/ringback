@@ -1,6 +1,7 @@
 package elevenlabs
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -112,18 +113,14 @@ var parseGolden = []struct {
 		want: agent.Unknown{Type: "vad_score"},
 	},
 	{
-		name: "client_tool_call is unknown in v1",
-		json: `{
-			"type": "client_tool_call",
-			"client_tool_call": {
-				"tool_name": "search",
-				"tool_call_id": "call_123",
-				"parameters": {"query": "weather"},
-				"event_id": 5,
-				"expects_response": true
-			}
-		}`,
-		want: agent.Unknown{Type: "client_tool_call"},
+		name: "client_tool_call",
+		json: `{"type": "client_tool_call", "client_tool_call": {"tool_name": "send_dtmf", "tool_call_id": "call_123", "parameters": {"digits":"1"}, "event_id": 5, "expects_response": true}}`,
+		want: agent.Tool{ID: "call_123", Name: "send_dtmf", Params: json.RawMessage(`{"digits":"1"}`)},
+	},
+	{
+		name: "client_tool_call without parameters",
+		json: `{"type": "client_tool_call", "client_tool_call": {"tool_name": "hang_up", "tool_call_id": "call_124", "event_id": 6}}`,
+		want: agent.Tool{ID: "call_124", Name: "hang_up"},
 	},
 	{
 		name: "future event type",
@@ -162,6 +159,7 @@ func TestParseServerEventErrors(t *testing.T) {
 		{"agent_response missing payload", `{"type":"agent_response"}`},
 		{"correction missing payload", `{"type":"agent_response_correction"}`},
 		{"client_error missing payload", `{"type":"client_error"}`},
+		{"client_tool_call missing payload", `{"type":"client_tool_call"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
