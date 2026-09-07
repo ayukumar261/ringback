@@ -34,6 +34,7 @@ type fakeRoom struct {
 
 	mu       sync.Mutex
 	err      error
+	dtmfErr  error
 	ops      []string
 	buffered []time.Duration
 	bufCalls int
@@ -56,6 +57,17 @@ func (f *fakeRoom) Flush() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = append(f.ops, "flush")
+}
+
+// SendDTMF records the press unless the test scripted a failure.
+func (f *fakeRoom) SendDTMF(digits string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dtmfErr != nil {
+		return f.dtmfErr
+	}
+	f.ops = append(f.ops, "dtmf:"+digits)
+	return nil
 }
 
 // Buffered pops the script one value per call and then repeats the last one.
@@ -122,6 +134,7 @@ type fakeConv struct {
 	sendErrs map[int]error
 	tools    []toolResult
 	closed   bool
+	evClosed bool
 }
 
 // toolResult is one SendTool call as the fake recorded it.
@@ -167,11 +180,17 @@ func (f *fakeConv) Err() error {
 func (f *fakeConv) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.closed {
-		f.closed = true
+	f.closed = true
+	f.closeEvents()
+	return nil
+}
+
+// closeEvents ends the event stream once, whoever asks first.
+func (f *fakeConv) closeEvents() {
+	if !f.evClosed {
+		f.evClosed = true
 		close(f.events)
 	}
-	return nil
 }
 
 // finish simulates the server ending the conversation with err.
@@ -181,8 +200,8 @@ func (f *fakeConv) finish(err error) {
 	if !f.closed {
 		f.closed = true
 		f.err = err
-		close(f.events)
 	}
+	f.closeEvents()
 }
 
 func (f *fakeConv) sent() [][]byte {
@@ -195,6 +214,22 @@ func (f *fakeConv) isClosed() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.closed
+}
+
+func (f *fakeConv) results() []toolResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.tools)
+}
+
+// queue pushes events and closes the channel while leaving the conversation open for replies.
+func (f *fakeConv) queue(evs ...agent.Event) {
+	for _, ev := range evs {
+		f.events <- ev
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeEvents()
 }
 
 // runBridge runs bridge under a liveness timeout and returns its error.
@@ -273,15 +308,15 @@ func TestBridgeEnqueueFlushOrder(t *testing.T) {
 }
 
 func TestDownlinkRecordsTurns(t *testing.T) {
-	rm := newFakeRoom()
-	ch := make(chan agent.Event, 4)
-	ch <- agent.AgentTurn{Text: "Hello, how can I help?"}
-	ch <- agent.UserTurn{Text: "What are your hours?"}
-	ch <- agent.Correction{Original: "Hello, how can I help?", Corrected: "Hello, how-"}
-	close(ch)
+	rm, conv := newFakeRoom(), newFakeConv()
+	conv.queue(
+		agent.AgentTurn{Text: "Hello, how can I help?"},
+		agent.UserTurn{Text: "What are your hours?"},
+		agent.Correction{Original: "Hello, how can I help?", Corrected: "Hello, how-"},
+	)
 
 	turns, got := newTestTurnLog("call-a")
-	if err := downlink(ch, rm, turns, discard); err != nil {
+	if err := downlink(conv, rm, turns, discard); err != nil {
 		t.Fatalf("downlink = %v", err)
 	}
 	want := []events.Turn{
@@ -291,6 +326,98 @@ func TestDownlinkRecordsTurns(t *testing.T) {
 	}
 	if !slices.Equal(*got, want) {
 		t.Fatalf("turns = %v, want %v", *got, want)
+	}
+}
+
+func TestDownlinkRunsSendDTMF(t *testing.T) {
+	rm, conv := newFakeRoom(), newFakeConv()
+	conv.queue(agent.Tool{ID: "c1", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)})
+
+	if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+		t.Fatalf("downlink = %v", err)
+	}
+	ops, _ := rm.snapshot()
+	if !slices.Equal(ops, []string{"dtmf:1"}) {
+		t.Fatalf("ops = %v, want [dtmf:1]", ops)
+	}
+	want := []toolResult{{id: "c1", result: "pressed 1", isErr: false}}
+	if got := conv.results(); !slices.Equal(got, want) {
+		t.Fatalf("results = %v, want %v", got, want)
+	}
+}
+
+func TestDownlinkToolErrors(t *testing.T) {
+	invalid := errors.New("room: send dtmf: invalid digit 'a'")
+	for _, tt := range []struct {
+		name    string
+		call    agent.Tool
+		dtmfErr error
+		wantMsg string
+	}{
+		{
+			name:    "bad digit",
+			call:    agent.Tool{ID: "c2", Name: "send_dtmf", Params: []byte(`{"digits":"a"}`)},
+			dtmfErr: invalid,
+			wantMsg: invalid.Error(),
+		},
+		{
+			name:    "unknown tool",
+			call:    agent.Tool{ID: "c3", Name: "hang_up", Params: []byte(`{}`)},
+			wantMsg: "unknown tool",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rm, conv := newFakeRoom(), newFakeConv()
+			rm.dtmfErr = tt.dtmfErr
+			conv.queue(tt.call)
+
+			if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+				t.Fatalf("downlink = %v", err)
+			}
+			if ops, _ := rm.snapshot(); len(ops) != 0 {
+				t.Fatalf("ops = %v, want none", ops)
+			}
+			got := conv.results()
+			if len(got) != 1 {
+				t.Fatalf("results = %v, want one", got)
+			}
+			if got[0].id != tt.call.ID || !got[0].isErr || !strings.Contains(got[0].result, tt.wantMsg) {
+				t.Fatalf("result = %+v, want is_error containing %q", got[0], tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestDownlinkToolResultErrClosedBenign(t *testing.T) {
+	rm, conv := newFakeRoom(), newFakeConv()
+	conv.queue(agent.Tool{ID: "c5", Name: "send_dtmf", Params: []byte(`{"digits":"1"}`)})
+	// The conversation ends before the reply goes out, so SendTool sees net.ErrClosed.
+	conv.mu.Lock()
+	conv.closed = true
+	conv.mu.Unlock()
+
+	if err := downlink(conv, rm, discardTurns(), discard); err != nil {
+		t.Fatalf("downlink = %v, want nil on a closed conversation", err)
+	}
+}
+
+func TestBridgeToolKeepsRoomOrder(t *testing.T) {
+	rm, conv := newFakeRoom(), newFakeConv()
+	conv.events <- agent.Audio{PCM: []byte("a"), EventID: 1}
+	conv.events <- agent.Interruption{EventID: 2}
+	conv.events <- agent.Tool{ID: "c6", Name: "send_dtmf", Params: []byte(`{"digits":"2#"}`)}
+	conv.queue(agent.Audio{PCM: []byte("c"), EventID: 3})
+
+	if err := runBridge(t, context.Background(), rm, conv); err != nil {
+		t.Fatalf("bridge = %v", err)
+	}
+	ops, _ := rm.snapshot()
+	want := []string{"enqueue:a", "flush", "dtmf:2#", "enqueue:c", "close"}
+	if !slices.Equal(ops, want) {
+		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+	if got := conv.results(); len(got) != 1 || got[0].result != "pressed 2#" || got[0].isErr {
+		t.Fatalf("results = %v, want one clean press", got)
 	}
 }
 

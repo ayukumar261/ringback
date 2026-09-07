@@ -24,6 +24,7 @@ type roomHandle interface {
 	CallerPCM() <-chan []byte
 	Enqueue(pcm []byte)
 	Flush()
+	SendDTMF(digits string) error
 	Buffered() time.Duration
 	Done() <-chan struct{}
 	Err() error
@@ -51,7 +52,7 @@ func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *
 		}
 	}()
 
-	clientErr := downlink(conv.Events(), rm, turns, log)
+	clientErr := downlink(conv, rm, turns, log)
 	if clientErr != nil {
 		conv.Close()
 	}
@@ -88,8 +89,8 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 }
 
 // downlink applies agent events to the room until the events close or a fatal server error.
-func downlink(events <-chan agent.Event, rm roomHandle, turns *turnLog, log *slog.Logger) error {
-	for ev := range events {
+func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, log *slog.Logger) error {
+	for ev := range conv.Events() {
 		switch e := ev.(type) {
 		case agent.Audio:
 			rm.Enqueue(e.PCM)
@@ -105,6 +106,10 @@ func downlink(events <-chan agent.Event, rm roomHandle, turns *turnLog, log *slo
 		case agent.Correction:
 			turns.correct(e.Corrected)
 			log.Info("agent cut off", "corrected", e.Corrected)
+		case agent.Tool:
+			if err := answerTool(conv, rm, e, log); err != nil {
+				return err
+			}
 		case agent.Error:
 			return fmt.Errorf("session: agent error: %s: %s", e.Name, e.Message)
 		case agent.Unknown:
@@ -114,6 +119,22 @@ func downlink(events <-chan agent.Event, rm roomHandle, turns *turnLog, log *slo
 			}
 			log.Debug("unhandled agent event", "type", e.Type, "raw", string(raw))
 		}
+	}
+	return nil
+}
+
+// answerTool runs one tool call and replies, treating a closed conversation as benign.
+func answerTool(conv agent.Conversation, rm roomHandle, call agent.Tool, log *slog.Logger) error {
+	result, err := runTool(rm, call)
+	if err != nil {
+		log.Warn("tool failed", "tool", call.Name, "err", err)
+		err = conv.SendTool(call.ID, err.Error(), true)
+	} else {
+		log.Info("tool ran", "tool", call.Name, "result", result)
+		err = conv.SendTool(call.ID, result, false)
+	}
+	if err != nil && !errors.Is(err, net.ErrClosed) {
+		return fmt.Errorf("session: tool result: %w", err)
 	}
 	return nil
 }
