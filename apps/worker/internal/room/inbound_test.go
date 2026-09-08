@@ -247,10 +247,13 @@ func TestInboundOffersTap(t *testing.T) {
 	rec.mu.Lock()
 	got := rec.caller
 	rec.mu.Unlock()
-	if got == nil {
-		t.Fatal("tap slot is empty, want the last decoded caller frame")
+	if len(got) != 2 {
+		t.Fatalf("tap queue holds %d frames, want both decoded caller frames", len(got))
 	}
-	if c := crossings(got); c < 45 {
-		t.Errorf("tap slot has %d crossings, want the high tone that arrived last", c)
+	if c := crossings(got[0]); c < 10 || c > 30 {
+		t.Errorf("first queued frame has %d crossings, want the low tone that arrived first", c)
+	}
+	if c := crossings(got[1]); c < 45 {
+		t.Errorf("second queued frame has %d crossings, want the high tone that arrived last", c)
 	}
 }

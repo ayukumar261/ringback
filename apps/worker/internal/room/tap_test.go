@@ -32,32 +32,64 @@ func deinterleave(stereo []byte) (left, right []byte) {
 	return left, right
 }
 
-func TestTapKeepsLatestOffer(t *testing.T) {
-	rec, path := newTestTap(t, discard)
-	rec.offer(toneFrame(lowHz))
-	rec.offer(toneFrame(highHz))
+// leftFrames records n ticks of agent silence, closes the tap, and returns each tick's left channel.
+func leftFrames(t *testing.T, rec *tap, path string, n int) [][]byte {
+	t.Helper()
 	silence := make([]byte, audio.FrameBytes)
-	rec.record(silence)
-	rec.record(silence)
+	for range n {
+		rec.record(silence)
+	}
 	if err := rec.close(); err != nil {
 		t.Fatal(err)
 	}
-
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := b[44:]
-	if len(data) != 2*2*audio.FrameBytes {
-		t.Fatalf("recorded %d bytes, want two stereo frames", len(data))
+	if len(data) != n*2*audio.FrameBytes {
+		t.Fatalf("recorded %d bytes, want %d stereo frames", len(data), n)
 	}
-	left, _ := deinterleave(data[:2*audio.FrameBytes])
-	if c := crossings(left); c < 45 {
-		t.Errorf("first tick has %d crossings on the left, want the newest high tone", c)
+	var lefts [][]byte
+	for i := range n {
+		left, _ := deinterleave(data[i*2*audio.FrameBytes : (i+1)*2*audio.FrameBytes])
+		lefts = append(lefts, left)
 	}
-	left, _ = deinterleave(data[2*audio.FrameBytes:])
-	if e := rms(left); e != 0 {
-		t.Errorf("second tick has rms %.0f on the left, want the drained slot's silence", e)
+	return lefts
+}
+
+func TestTapQueuesOffersInOrder(t *testing.T) {
+	rec, path := newTestTap(t, discard)
+	rec.offer(toneFrame(lowHz))
+	rec.offer(toneFrame(highHz))
+	lefts := leftFrames(t, rec, path, 3)
+
+	if c := crossings(lefts[0]); c < 10 || c > 30 {
+		t.Errorf("first tick has %d crossings on the left, want the older low tone", c)
+	}
+	if c := crossings(lefts[1]); c < 45 {
+		t.Errorf("second tick has %d crossings on the left, want the newer high tone", c)
+	}
+	if e := rms(lefts[2]); e != 0 {
+		t.Errorf("third tick has rms %.0f on the left, want silence from the empty queue", e)
+	}
+}
+
+func TestTapDropsOldestPastCap(t *testing.T) {
+	rec, path := newTestTap(t, discard)
+	rec.offer(toneFrame(lowHz))
+	for range callerQueueCap {
+		rec.offer(toneFrame(highHz))
+	}
+	lefts := leftFrames(t, rec, path, callerQueueCap+1)
+
+	for i := range callerQueueCap {
+		if c := crossings(lefts[i]); c < 45 {
+			t.Errorf("tick %d has %d crossings on the left, want the high tone that outlived the dropped low one", i, c)
+		}
+	}
+	if e := rms(lefts[callerQueueCap]); e != 0 {
+		t.Errorf("tick %d has rms %.0f on the left, want silence from the empty queue", callerQueueCap, e)
 	}
 }
 
