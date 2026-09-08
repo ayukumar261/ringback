@@ -1,0 +1,29 @@
+Review ready
+{{ID}} · {{TITLE}}
+
+An agent fixed this in an isolated worktree. The changes are uncommitted and the ticket is in-progress until you have reviewed it.
+
+Worktree
+{{WORKTREE}}
+{{BRANCH}}
+
+The bug
+{{BUG}}
+
+What changed
+{{CHANGES}}
+
+Files
+{{FILE_ROWS}}
+{{FILE_COUNT}} files  +{{ADDED}}  −{{REMOVED}}
+
+Verification
+{{VERIFY_ROWS}}
+
+What to look at
+{{REVIEW_ITEMS}}
+
+When you're happy with it
+{{COMMANDS}}
+
+Sent by Claude Code, {{DATE}}.

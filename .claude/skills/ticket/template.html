@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review ready: {{ID}}</title>
+</head>
+<body style="margin:0;padding:0;background:#ffffff;color:#1a1a1a;font-family:Inter,-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;">
+<tr><td align="center" style="padding:72px 24px 96px 24px;">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+
+<!-- Kicker + title -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 12px 0;font-size:13px;line-height:20px;color:#6b6b6b;">{{DATE}}</p>
+  <h1 style="margin:0;font-size:28px;line-height:36px;font-weight:600;letter-spacing:-0.02em;color:#1a1a1a;">Review ready</h1>
+  <p style="margin:8px 0 0 0;font-size:17px;line-height:26px;color:#1a1a1a;">{{ID}}&nbsp;&nbsp;<span style="color:#6b6b6b;">{{TITLE}}</span></p>
+</td></tr>
+
+<!-- Lede -->
+<tr><td style="padding:0 0 40px 0;border-top:1px solid #e6e6e6;">
+  <p style="margin:24px 0 0 0;font-size:17px;line-height:28px;color:#1a1a1a;">An agent fixed this in an isolated worktree. The changes are uncommitted and the ticket is in‑progress until you have reviewed it.</p>
+</td></tr>
+
+<!-- Worktree -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">Worktree</p>
+  <p style="margin:0;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:22px;color:#1a1a1a;word-break:break-all;">{{WORKTREE}}</p>
+  <p style="margin:0;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:22px;color:#6b6b6b;">{{BRANCH}}</p>
+</td></tr>
+
+<!-- The bug -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">The bug</p>
+  <p style="margin:0;font-size:15px;line-height:24px;color:#1a1a1a;">{{BUG}}</p>
+</td></tr>
+
+<!-- What changed -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">What changed</p>
+  {{CHANGES}}
+  <!-- Each paragraph looks like this. The last one has margin:0. -->
+  <!-- <p style="margin:0 0 12px 0;font-size:15px;line-height:24px;color:#1a1a1a;"><span style="font-weight:600;">Symbol</span> does this.</p> -->
+</td></tr>
+
+<!-- Files -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">Files</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:22px;font-variant-numeric:tabular-nums;">
+    {{FILE_ROWS}}
+    <!-- New file row -->
+    <!-- <tr><td style="padding:3px 0;color:#1a1a1a;">path/file.go</td><td align="right" style="padding:3px 0;color:#6b6b6b;white-space:nowrap;">new</td><td align="right" width="56" style="padding:3px 0;color:#1a1a1a;">38</td></tr> -->
+    <!-- Changed file row -->
+    <!-- <tr><td style="padding:3px 0;color:#1a1a1a;">path/file.go</td><td align="right" style="padding:3px 0;color:#1a1a1a;white-space:nowrap;">+21</td><td align="right" width="56" style="padding:3px 0;color:#6b6b6b;">−1</td></tr> -->
+    <!-- The last file row uses padding:3px 0 8px 0 on all three cells. -->
+    <tr><td style="padding:8px 0 0 0;border-top:1px solid #e6e6e6;color:#6b6b6b;font-family:Inter,-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;">{{FILE_COUNT}} files</td><td align="right" style="padding:8px 0 0 0;border-top:1px solid #e6e6e6;color:#1a1a1a;white-space:nowrap;">+{{ADDED}}</td><td align="right" width="56" style="padding:8px 0 0 0;border-top:1px solid #e6e6e6;color:#6b6b6b;">−{{REMOVED}}</td></tr>
+  </table>
+</td></tr>
+
+<!-- Verification -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">Verification</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:15px;line-height:24px;">
+    {{VERIFY_ROWS}}
+    <!-- <tr><td width="140" valign="top" style="padding:3px 0;color:#6b6b6b;">go test</td><td style="padding:3px 0;color:#1a1a1a;">9 packages, 53 tests</td></tr> -->
+  </table>
+</td></tr>
+
+<!-- What to look at -->
+<tr><td style="padding:0 0 40px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">What to look at</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:15px;line-height:24px;color:#1a1a1a;">
+    {{REVIEW_ITEMS}}
+    <!-- <tr><td width="24" valign="top" style="padding:0 0 6px 0;font-variant-numeric:tabular-nums;">1.</td><td style="padding:0 0 6px 0;">Text.</td></tr> -->
+    <!-- The last item uses padding:0 on both cells. -->
+  </table>
+</td></tr>
+
+<!-- Commands -->
+<tr><td style="padding:0 0 48px 0;">
+  <p style="margin:0 0 16px 0;font-size:15px;line-height:22px;font-weight:600;color:#1a1a1a;">When you're happy with it</p>
+  <p style="margin:0;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:22px;color:#1a1a1a;word-break:break-word;">
+    {{COMMANDS}}
+    <!-- One command per line, separated by <br>. Escape && as &amp;&amp;. -->
+  </p>
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="padding:24px 0 0 0;border-top:1px solid #e6e6e6;">
+  <p style="margin:0;font-size:13px;line-height:20px;color:#6b6b6b;">Sent by Claude Code, {{DATE}}.</p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

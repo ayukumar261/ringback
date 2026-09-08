@@ -40,3 +40,6 @@ yarn-error.log*
 # Fiberplane
 .fp/*
 !.fp/remote.toml
+
+# Claude Code agent worktrees
+.claude/worktrees
