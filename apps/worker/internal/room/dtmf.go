@@ -21,26 +21,25 @@ func (r *Room) SendDTMF(digits string) error {
 	}
 	return sendDTMF(digits, func(ev *livekit.SipDTMF) error {
 		return r.room.LocalParticipant.PublishDataPacket(ev, lksdk.WithDataPublishReliable(true))
-	})
+	}, r.tap)
 }
 
-// sendDTMF validates every digit before publishing any of them.
-func sendDTMF(digits string, publish func(*livekit.SipDTMF) error) error {
+// sendDTMF validates every digit before publishing any of them and hands each published digit to the recording.
+func sendDTMF(digits string, publish func(*livekit.SipDTMF) error, rec *tap) error {
 	if digits == "" {
 		return fmt.Errorf("room: send dtmf: no digits")
 	}
-	events := make([]*livekit.SipDTMF, 0, len(digits))
 	for _, d := range digits {
-		code, ok := dtmfCodes[d]
-		if !ok {
+		if _, ok := dtmfCodes[d]; !ok {
 			return fmt.Errorf("room: send dtmf: invalid digit %q", d)
 		}
-		events = append(events, &livekit.SipDTMF{Code: code, Digit: string(d)})
 	}
-	for _, ev := range events {
+	for _, d := range digits {
+		ev := &livekit.SipDTMF{Code: dtmfCodes[d], Digit: string(d)}
 		if err := publish(ev); err != nil {
 			return fmt.Errorf("room: send dtmf %q: %w", ev.Digit, err)
 		}
+		rec.press(d)
 	}
 	return nil
 }

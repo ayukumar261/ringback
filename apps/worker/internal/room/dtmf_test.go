@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/livekit/protocol/livekit"
+
+	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 )
 
 // recordDTMF returns a publish closure that appends every event to got.
@@ -27,7 +29,7 @@ func TestSendDTMFPublishesEachDigit(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []*livekit.SipDTMF
-			if err := sendDTMF(tt.digits, recordDTMF(&got)); err != nil {
+			if err := sendDTMF(tt.digits, recordDTMF(&got), nil); err != nil {
 				t.Fatalf("err = %v, want nil", err)
 			}
 			if len(got) != len(tt.codes) {
@@ -55,7 +57,7 @@ func TestSendDTMFRejectsBeforePublishing(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []*livekit.SipDTMF
-			err := sendDTMF(tt.digits, recordDTMF(&got))
+			err := sendDTMF(tt.digits, recordDTMF(&got), nil)
 			if err == nil {
 				t.Fatalf("err = nil, want error for %q", tt.digits)
 			}
@@ -75,12 +77,44 @@ func TestSendDTMFStopsAtPublishError(t *testing.T) {
 			return boom
 		}
 		return nil
-	})
+	}, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want boom", err)
 	}
 	if calls != 2 {
 		t.Fatalf("publish called %d times, want 2", calls)
+	}
+}
+
+func TestSendDTMFPressesTapPerPublishedDigit(t *testing.T) {
+	rec, _ := newTestTap(t, discard)
+	defer rec.close()
+	var got []*livekit.SipDTMF
+	if err := sendDTMF("12", recordDTMF(&got), rec); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if want := 2 * 2 * audio.DTMFSamples; len(rec.tone) != want {
+		t.Errorf("tap holds %d tone bytes, want %d for two key presses", len(rec.tone), want)
+	}
+}
+
+func TestSendDTMFPressesTapOnlyForPublishedDigits(t *testing.T) {
+	rec, _ := newTestTap(t, discard)
+	defer rec.close()
+	boom := errors.New("boom")
+	calls := 0
+	err := sendDTMF("123", func(*livekit.SipDTMF) error {
+		calls++
+		if calls == 2 {
+			return boom
+		}
+		return nil
+	}, rec)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	if want := 2 * audio.DTMFSamples; len(rec.tone) != want {
+		t.Errorf("tap holds %d tone bytes, want %d for the one digit that went out", len(rec.tone), want)
 	}
 }
 

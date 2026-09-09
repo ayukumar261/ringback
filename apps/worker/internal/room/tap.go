@@ -18,6 +18,7 @@ type tap struct {
 
 	mu      sync.Mutex
 	caller  [][]byte // decoded caller frames waiting for a tick, oldest first
+	tone    []byte   // key press audio still waiting to be mixed into the agent channel
 	stopped bool     // set after a write error so the call outlives the recording
 }
 
@@ -52,6 +53,22 @@ func (t *tap) pop() []byte {
 	return oldest
 }
 
+// press queues the beep for key so the next ticks mix it into the agent channel of the recording only.
+func (t *tap) press(key rune) {
+	if t == nil {
+		return
+	}
+	pcm := audio.DTMFTone(key)
+	if pcm == nil {
+		return
+	}
+	t.mu.Lock()
+	if !t.stopped {
+		t.tone = append(t.tone, pcm...)
+	}
+	t.mu.Unlock()
+}
+
 // record pops the oldest caller frame and writes it beside the agent frame, going quiet after a write error.
 func (t *tap) record(agent []byte) {
 	if t == nil {
@@ -62,6 +79,14 @@ func (t *tap) record(agent []byte) {
 	caller := t.pop()
 	if t.stopped {
 		return
+	}
+	if len(t.tone) > 0 {
+		n := min(len(t.tone), audio.FrameBytes)
+		agent = audio.Mix(agent, t.tone[:n])
+		t.tone = t.tone[n:]
+		if len(t.tone) == 0 {
+			t.tone = nil
+		}
 	}
 	if err := t.w.Write(audio.Interleave(caller, agent)); err != nil {
 		t.stopped = true

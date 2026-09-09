@@ -93,9 +93,75 @@ func TestTapDropsOldestPastCap(t *testing.T) {
 	}
 }
 
+func TestTapMixesPressIntoAgentChannel(t *testing.T) {
+	rec, path := newTestTap(t, discard)
+	rec.press('5')
+	agent := make([]byte, audio.FrameBytes)
+	toneFrames := 2 * audio.DTMFSamples / audio.FrameBytes
+	for range toneFrames + 1 {
+		rec.record(agent)
+	}
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(agent, make([]byte, audio.FrameBytes)) {
+		t.Fatal("record changed the live agent frame, want only the recording to carry the beep")
+	}
+	if rec.tone != nil {
+		t.Errorf("tap still holds %d tone bytes after the beep played out, want none", len(rec.tone))
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := b[44:]
+	if len(data) != (toneFrames+1)*2*audio.FrameBytes {
+		t.Fatalf("recorded %d bytes, want %d stereo frames", len(data), toneFrames+1)
+	}
+	for i := range toneFrames + 1 {
+		left, right := deinterleave(data[i*2*audio.FrameBytes : (i+1)*2*audio.FrameBytes])
+		if e := rms(left); e != 0 {
+			t.Errorf("tick %d has rms %.0f on the caller channel, want silence", i, e)
+		}
+		e := rms(right)
+		if i < toneFrames && e < 3000 {
+			t.Errorf("tick %d has rms %.0f on the agent channel, want the beep", i, e)
+		}
+		if i == toneFrames && e != 0 {
+			t.Errorf("tick %d has rms %.0f on the agent channel, want silence after the beep", i, e)
+		}
+	}
+}
+
+func TestTapPressClampsLoudAgent(t *testing.T) {
+	rec, path := newTestTap(t, discard)
+	rec.press('1')
+	loud := make([]byte, audio.FrameBytes)
+	for i := 0; i < audio.FrameBytes; i += 2 {
+		loud[i], loud[i+1] = 0xFF, 0x7F
+	}
+	rec.record(loud)
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, right := deinterleave(b[44:])
+	for i := 0; i < len(right); i += 2 {
+		if v := int16(uint16(right[i]) | uint16(right[i+1])<<8); v < 0 {
+			t.Fatalf("sample %d wrapped to %d, want the sum clamped at the int16 ceiling", i/2, v)
+		}
+	}
+}
+
 func TestTapNilIsInert(t *testing.T) {
 	var rec *tap
 	rec.offer(toneFrame(lowHz))
+	rec.press('1')
 	rec.record(make([]byte, audio.FrameBytes))
 	if err := rec.close(); err != nil {
 		t.Fatalf("nil tap close returned %v", err)

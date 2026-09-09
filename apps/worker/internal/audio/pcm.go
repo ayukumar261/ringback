@@ -1,6 +1,9 @@
 package audio
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math"
+)
 
 // pcmToInt16 converts little-endian PCM bytes into samples, reusing dst when it fits.
 func pcmToInt16(b []byte, dst []int16) []int16 {
@@ -34,6 +37,23 @@ func Interleave(left, right []byte) []byte {
 		if len(right) >= 2*i+2 {
 			out[4*i+2], out[4*i+3] = right[2*i], right[2*i+1]
 		}
+	}
+	return out
+}
+
+// Mix sums a and b sample by sample into a fresh frame as long as the longer input, clamping so loud peaks do not wrap.
+func Mix(a, b []byte) []byte {
+	out := make([]byte, max(len(a), len(b)))
+	for i := 0; 2*i+2 <= len(out); i++ {
+		var v int32
+		if 2*i+2 <= len(a) {
+			v += int32(int16(binary.LittleEndian.Uint16(a[2*i:])))
+		}
+		if 2*i+2 <= len(b) {
+			v += int32(int16(binary.LittleEndian.Uint16(b[2*i:])))
+		}
+		v = max(math.MinInt16, min(math.MaxInt16, v))
+		binary.LittleEndian.PutUint16(out[2*i:], uint16(int16(v)))
 	}
 	return out
 }

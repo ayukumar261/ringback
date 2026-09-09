@@ -99,3 +99,30 @@ func TestInterleave(t *testing.T) {
 		})
 	}
 }
+
+func TestMix(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a, b []int16
+		want []int16
+	}{
+		{"sums", []int16{1, -2, 300}, []int16{10, 20, -30}, []int16{11, 18, 270}},
+		{"clamps high", []int16{32767, 20000}, []int16{1, 20000}, []int16{32767, 32767}},
+		{"clamps low", []int16{-32768, -20000}, []int16{-1, -20000}, []int16{-32768, -32768}},
+		{"short b keeps a", []int16{5, 6, 7}, []int16{1}, []int16{6, 6, 7}},
+		{"short a keeps b", []int16{5}, []int16{1, 2, 3}, []int16{6, 2, 3}},
+		{"nil b copies a", []int16{5, 6}, nil, []int16{5, 6}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a, b := int16ToPCM(tt.a), int16ToPCM(tt.b)
+			before := append([]byte{}, a...)
+			got := pcmToInt16(Mix(a, b), nil)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Mix(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+			if !bytes.Equal(a, before) {
+				t.Errorf("Mix changed its first input to %v", pcmToInt16(a, nil))
+			}
+		})
+	}
+}
