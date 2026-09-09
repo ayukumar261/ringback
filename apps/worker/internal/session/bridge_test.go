@@ -647,6 +647,55 @@ func TestBridgeRoomDeathError(t *testing.T) {
 	}
 }
 
+func TestBridgeKeepsUserTurnAfterHangup(t *testing.T) {
+	rm, conv, clk := newFakeRoom(), newFakeConv(), newFakeClock()
+	seen := make(chan events.Turn, 4)
+	turns := newTurnLog("call-a", func(turn events.Turn) { seen <- turn })
+	done := make(chan error, 1)
+	go func() { done <- bridge(context.Background(), rm, conv, turns, clk.after, discard) }()
+
+	// The caller hangs up and the transcript of their last sentence lands during the grace.
+	rm.kill(nil)
+	waitFor(t, func() bool { return len(clk.asked()) == 1 })
+	if got := clk.asked(); got[0] != hangupGrace {
+		t.Fatalf("grace = %v, want %v", got[0], hangupGrace)
+	}
+	conv.events <- agent.Audio{PCM: []byte("late"), EventID: 9}
+	conv.events <- agent.UserTurn{Text: "Thanks, bye."}
+	select {
+	case turn := <-seen:
+		if turn.Role != events.RoleUser || turn.Text != "Thanks, bye." {
+			t.Fatalf("turn = %+v, want the final user turn", turn)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("final user turn never recorded")
+	}
+	if conv.isClosed() {
+		t.Fatal("conversation closed before the grace ended")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("bridge = %v before the grace ended", err)
+	default:
+	}
+
+	clk.fire <- time.Time{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("bridge = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bridge did not return")
+	}
+	if !conv.isClosed() {
+		t.Fatal("conversation not closed after the grace")
+	}
+	if ops, _ := rm.snapshot(); slices.Contains(ops, "enqueue:late") {
+		t.Fatalf("ops = %v, want no audio enqueued after the room ended", ops)
+	}
+}
+
 func TestBridgeCtxCancel(t *testing.T) {
 	rm, conv := newFakeRoom(), newFakeConv()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	maxDrain   = 30 * time.Second       // cap on goodbye playout after a clean agent end
-	drainGrace = 100 * time.Millisecond // lets the final frames clear the wire
+	maxDrain    = 30 * time.Second       // cap on goodbye playout after a clean agent end
+	drainGrace  = 100 * time.Millisecond // lets the final frames clear the wire
+	hangupGrace = 2 * time.Second        // keeps the agent socket open after a hangup
 )
 
 // roomHandle is the slice of room.Room the bridge needs.
@@ -36,14 +37,6 @@ type clock func(time.Duration) <-chan time.Time
 
 // bridge pumps audio both ways and tears both sides down when either ends.
 func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *turnLog, after clock, log *slog.Logger) error {
-	// The room dying must unblock the event pump below.
-	watchDone := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		<-rm.Done()
-		conv.Close()
-	}()
-
 	// upErr is written before upExited closes and read only after it closes.
 	var upErr error
 	upExited := make(chan struct{})
@@ -73,7 +66,6 @@ func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *
 
 	rm.Close()
 	<-upExited
-	<-watchDone
 	conv.Close()
 	return classify(clientErr, rm.Err(), convErr, upErr)
 }
@@ -91,37 +83,63 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 	return nil
 }
 
-// downlink applies agent events to the room until the events close or a fatal server error.
+// downlink applies agent events to the room until the events close or a fatal server error and holds the conversation open for a short grace after the room ends.
 func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after clock, log *slog.Logger) error {
-	for ev := range conv.Events() {
-		switch e := ev.(type) {
-		case agent.Audio:
-			rm.Enqueue(e.PCM)
-		case agent.Interruption:
-			rm.Flush()
-			log.Info("caller barge-in", "event_id", e.EventID)
-		case agent.UserTurn:
-			turns.user(e.Text)
-			log.Info("user said", "text", e.Text)
-		case agent.AgentTurn:
-			turns.agent(e.Text)
-			log.Info("agent said", "text", e.Text)
-		case agent.Correction:
-			turns.correct(e.Corrected)
-			log.Info("agent cut off", "corrected", e.Corrected)
-		case agent.Tool:
-			if err := answerTool(conv, rm, turns, e, after, log); err != nil {
+	roomDone := rm.Done()
+	var grace <-chan time.Time
+	roomEnded := false
+	for {
+		select {
+		case <-roomDone:
+			// The final user transcript is often still in flight when the far end hangs up.
+			roomEnded = true
+			roomDone = nil
+			grace = after(hangupGrace)
+		case <-grace:
+			grace = nil
+			conv.Close()
+		case ev, ok := <-conv.Events():
+			if !ok {
+				return nil
+			}
+			if err := apply(ev, conv, rm, turns, roomEnded, after, log); err != nil {
 				return err
 			}
-		case agent.Error:
-			return fmt.Errorf("session: agent error: %s: %s", e.Name, e.Message)
-		case agent.Unknown:
-			raw := e.Raw
-			if len(raw) > 200 {
-				raw = raw[:200]
-			}
-			log.Debug("unhandled agent event", "type", e.Type, "raw", string(raw))
 		}
+	}
+}
+
+// apply performs one agent event on the room and drops audio once the room has ended.
+func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLog, roomEnded bool, after clock, log *slog.Logger) error {
+	switch e := ev.(type) {
+	case agent.Audio:
+		if !roomEnded {
+			rm.Enqueue(e.PCM)
+		}
+	case agent.Interruption:
+		rm.Flush()
+		log.Info("caller barge-in", "event_id", e.EventID)
+	case agent.UserTurn:
+		turns.user(e.Text)
+		log.Info("user said", "text", e.Text)
+	case agent.AgentTurn:
+		turns.agent(e.Text)
+		log.Info("agent said", "text", e.Text)
+	case agent.Correction:
+		turns.correct(e.Corrected)
+		log.Info("agent cut off", "corrected", e.Corrected)
+	case agent.Tool:
+		if err := answerTool(conv, rm, turns, e, after, log); err != nil {
+			return err
+		}
+	case agent.Error:
+		return fmt.Errorf("session: agent error: %s: %s", e.Name, e.Message)
+	case agent.Unknown:
+		raw := e.Raw
+		if len(raw) > 200 {
+			raw = raw[:200]
+		}
+		log.Debug("unhandled agent event", "type", e.Type, "raw", string(raw))
 	}
 	return nil
 }
