@@ -1,5 +1,10 @@
 import { basename, join } from "node:path";
-import { HttpRouter, HttpServerResponse } from "@effect/platform";
+import {
+  FileSystem,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "@effect/platform";
 import { Config, Effect, Option } from "effect";
 import { MongoClient } from "../clients/mongo.js";
 
@@ -20,8 +25,66 @@ export const findAudio = (mongo: MongoClient, room: string) =>
 export const audioPath = (dir: string, name: string): string =>
   join(dir, basename(name));
 
-// audioFor streams room's recording as wav, 404 when the call has no audio or the file is gone.
-export const audioFor = (room: string) =>
+// ByteRange is the inclusive span a Range header asks for, the whole file when the header is missing or unreadable, or unsatisfiable when it starts past the end.
+export type ByteRange =
+  | { readonly _tag: "full" }
+  | { readonly _tag: "partial"; readonly start: number; readonly end: number }
+  | { readonly _tag: "unsatisfiable" };
+
+// parseRange reads one bytes range against a file of size bytes, clamping the end to the last byte and taking a suffix range as the last n bytes.
+export const parseRange = (
+  header: string | undefined,
+  size: number,
+): ByteRange => {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header?.trim() ?? "");
+  const first = match?.[1] ?? "";
+  const last = match?.[2] ?? "";
+  if (match === null || (first === "" && last === "")) return { _tag: "full" };
+  if (first !== "" && last !== "" && Number(first) > Number(last)) {
+    return { _tag: "full" };
+  }
+  const start = first === "" ? Math.max(size - Number(last), 0) : Number(first);
+  const end =
+    first === "" || last === "" ? size - 1 : Math.min(Number(last), size - 1);
+  return start >= size
+    ? { _tag: "unsatisfiable" }
+    : { _tag: "partial", start, end };
+};
+
+// audioResponse streams the whole file with a 200, only the asked bytes with a 206, or a bare 416 for a range past the end.
+export const audioResponse = (path: string, range: string | undefined) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const size = Number((yield* fs.stat(path)).size);
+    const asked = parseRange(range, size);
+    if (asked._tag === "unsatisfiable") {
+      return HttpServerResponse.empty({
+        status: 416,
+        headers: { "accept-ranges": "bytes", "content-range": `bytes */${size}` },
+      });
+    }
+    const start = asked._tag === "partial" ? asked.start : 0;
+    const end = asked._tag === "partial" ? asked.end : size - 1;
+    const length = end - start + 1;
+    return HttpServerResponse.stream(
+      fs.stream(path, { offset: start, bytesToRead: length }),
+      {
+        status: asked._tag === "partial" ? 206 : 200,
+        contentType: "audio/wav",
+        contentLength: length,
+        headers:
+          asked._tag === "partial"
+            ? {
+                "accept-ranges": "bytes",
+                "content-range": `bytes ${start}-${end}/${size}`,
+              }
+            : { "accept-ranges": "bytes" },
+      },
+    );
+  });
+
+// audioFor serves room's recording as wav honoring range, 404 when the call has no audio or the file is gone.
+export const audioFor = (room: string, range: string | undefined) =>
   Effect.gen(function* () {
     const dir = yield* AudioDir;
     if (Option.isNone(dir)) {
@@ -36,9 +99,7 @@ export const audioFor = (room: string) =>
         { status: 404 },
       );
     }
-    return yield* HttpServerResponse.file(audioPath(dir.value, name), {
-      contentType: "audio/wav",
-    }).pipe(
+    return yield* audioResponse(audioPath(dir.value, name), range).pipe(
       Effect.catchIf(
         (e) => e._tag === "SystemError" && e.reason === "NotFound",
         () =>
@@ -62,5 +123,6 @@ export const audioFor = (room: string) =>
 // audioSnapshot serves GET /calls/:room/audio.
 export const audioSnapshot = Effect.gen(function* () {
   const params = yield* HttpRouter.params;
-  return yield* audioFor(params.room ?? "");
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  return yield* audioFor(params.room ?? "", request.headers["range"]);
 });
