@@ -1,8 +1,8 @@
 import { HttpServerResponse } from "@effect/platform";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { MongoClient, type TurnDoc } from "../clients/mongo.js";
-import { listTurns, turnsFor } from "./turns.js";
+import { listTurns, TurnSnapshot, turnsFor } from "./turns.js";
 
 // fakeMongo yields the given turn docs (or failure) and records each find call.
 const fakeMongo = (result: TurnDoc[] | Error) => {
@@ -41,6 +41,62 @@ const turnDocs: TurnDoc[] = [
 ];
 
 describe("listTurns", () => {
+  it.each(["agent", "tool"] as const)(
+    "round-trips a %s span as unix milliseconds",
+    async (role) => {
+      const doc: TurnDoc = {
+        room: "r-a",
+        seq: 1,
+        role,
+        text: "Hello",
+        at: new Date(900),
+        startedAt: new Date(1000),
+        endedAt: new Date(1400),
+        durationMs: 400,
+      };
+      const { mongo } = fakeMongo([doc]);
+      const out = await Effect.runPromise(listTurns(mongo, "r-a"));
+      expect(out).toStrictEqual([
+        {
+          room: "r-a",
+          seq: 1,
+          role,
+          text: "Hello",
+          at: 900,
+          started_at: 1000,
+          ended_at: 1400,
+          duration_ms: 400,
+        },
+      ]);
+      expect(Schema.decodeUnknownSync(TurnSnapshot)(out[0])).toStrictEqual(doc);
+    },
+  );
+
+  it("omits unknown spans and unfinished end fields", async () => {
+    const { mongo } = fakeMongo([
+      { room: "r-a", seq: 1, role: "user", text: "Hi", at: new Date(0) },
+      {
+        room: "r-a",
+        seq: 2,
+        role: "agent",
+        text: "Hello",
+        at: new Date(1),
+        startedAt: new Date(0),
+      },
+    ]);
+    expect(await Effect.runPromise(listTurns(mongo, "r-a"))).toStrictEqual([
+      { room: "r-a", seq: 1, role: "user", text: "Hi", at: 0 },
+      {
+        room: "r-a",
+        seq: 2,
+        role: "agent",
+        text: "Hello",
+        at: 1,
+        started_at: 0,
+      },
+    ]);
+  });
+
   it("encodes docs into the SSE wire dialect", async () => {
     const { mongo } = fakeMongo(turnDocs);
     const out = await Effect.runPromise(listTurns(mongo, "r-a"));

@@ -14,6 +14,7 @@ export interface CallDoc {
   endedAt?: Date;
   durationMs?: number;
   audio?: string;
+  audioStartedAt?: Date;
 }
 
 // TurnDoc is one transcript turn, unique per (room, seq).
@@ -23,6 +24,9 @@ export interface TurnDoc {
   role: "user" | "agent" | "tool";
   text: string;
   at: Date;
+  startedAt?: Date;
+  endedAt?: Date;
+  durationMs?: number;
 }
 
 // MetaDoc keys small pieces of consumer state by name.

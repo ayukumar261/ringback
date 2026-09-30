@@ -8,6 +8,7 @@ export const CallEnded = Schema.Struct({
   ended_at: Schema.NumberFromString,
   duration_ms: Schema.NumberFromString,
   audio: Schema.optional(Schema.String),
+  audio_started_at: Schema.optional(Schema.NumberFromString),
 });
 export type CallEnded = typeof CallEnded.Type;
 
@@ -22,6 +23,9 @@ export const applyCallEnded = (mongo: MongoClient, ev: CallEnded) =>
           endedAt: new Date(ev.ended_at),
           durationMs: ev.duration_ms,
           audio: ev.audio ?? "",
+          ...(ev.audio_started_at !== undefined && {
+            audioStartedAt: new Date(ev.audio_started_at),
+          }),
         },
       },
       { upsert: true },

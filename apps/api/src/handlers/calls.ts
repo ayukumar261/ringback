@@ -127,6 +127,9 @@ export const CallSnapshot = Schema.Struct({
     Schema.fromKey("duration_ms"),
   ),
   audio: Schema.optional(Schema.String),
+  audioStartedAt: Schema.optional(Schema.DateFromNumber).pipe(
+    Schema.fromKey("audio_started_at"),
+  ),
 });
 
 const encodeSnapshots = Schema.encode(Schema.Array(CallSnapshot));

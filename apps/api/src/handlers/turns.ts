@@ -9,6 +9,15 @@ export const TurnSnapshot = Schema.Struct({
   role: Schema.Literal("user", "agent", "tool"),
   text: Schema.String,
   at: Schema.DateFromNumber,
+  startedAt: Schema.optional(Schema.DateFromNumber).pipe(
+    Schema.fromKey("started_at"),
+  ),
+  endedAt: Schema.optional(Schema.DateFromNumber).pipe(
+    Schema.fromKey("ended_at"),
+  ),
+  durationMs: Schema.optional(Schema.Number).pipe(
+    Schema.fromKey("duration_ms"),
+  ),
 });
 
 const encodeSnapshots = Schema.encode(Schema.Array(TurnSnapshot));

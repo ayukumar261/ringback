@@ -1,5 +1,5 @@
 import { HttpServerResponse } from "@effect/platform";
-import { Chunk, Effect, Fiber, PubSub, Stream } from "effect";
+import { Chunk, Effect, Fiber, PubSub, Schema, Stream } from "effect";
 import type { Redis } from "ioredis";
 import type {
   SIPOutboundTrunkInfo,
@@ -7,11 +7,12 @@ import type {
 } from "livekit-server-sdk";
 import { describe, expect, it } from "vitest";
 import { type CallDoc, MongoClient } from "../clients/mongo.js";
-import type { CallEvent } from "../events/index.js";
+import { type CallEvent, decodeCallEvent } from "../events/index.js";
 import { CallFeed } from "../pipeline/feed.js";
 import {
   authorized,
   callsSnapshot,
+  CallSnapshot,
   events,
   frame,
   isAfter,
@@ -174,6 +175,52 @@ describe("frame", () => {
       'id: 1-1\nevent: call.started\ndata: {"event":"call.started","room":"a","started_at":5}\n\n',
     );
   });
+
+  it.each(["agent", "tool"])(
+    "carries a decoded %s span in SSE",
+    async (role) => {
+      const event = await Effect.runPromise(
+        decodeCallEvent({
+          event: "call.turn",
+          room: "r-a",
+          seq: "1",
+          role,
+          text: "Hello",
+          at: "900",
+          started_at: "1000",
+          ended_at: "1400",
+          duration_ms: "400",
+        }),
+      );
+      expect(frame({ id: "1-1", event })).toBe(
+        `id: 1-1\nevent: call.turn\ndata: ${JSON.stringify({
+          event: "call.turn",
+          room: "r-a",
+          seq: 1,
+          role,
+          text: "Hello",
+          at: 900,
+          started_at: 1000,
+          ended_at: 1400,
+          duration_ms: 400,
+        })}\n\n`,
+      );
+    },
+  );
+
+  it("carries the recording start in SSE", async () => {
+    const event = await Effect.runPromise(
+      decodeCallEvent({
+        event: "call.ended",
+        room: "r-a",
+        ended_at: "1500",
+        duration_ms: "1000",
+        audio: "r-a.wav",
+        audio_started_at: "0",
+      }),
+    );
+    expect(frame({ id: "2-1", event })).toContain('"audio_started_at":0');
+  });
 });
 
 // fakeMongo yields the given docs (or failure) and records each find call.
@@ -219,6 +266,14 @@ const endedDoc: CallDoc = {
 };
 
 describe("listCalls", () => {
+  it("round-trips the recording start as unix milliseconds", async () => {
+    const doc: CallDoc = { ...endedDoc, audioStartedAt: new Date(0) };
+    const { mongo } = fakeMongo([doc]);
+    const out = await Effect.runPromise(listCalls(mongo));
+    expect(out[0]).toHaveProperty("audio_started_at", 0);
+    expect(Schema.decodeUnknownSync(CallSnapshot)(out[0])).toStrictEqual(doc);
+  });
+
   it("encodes docs into the SSE wire dialect", async () => {
     const { mongo } = fakeMongo([endedDoc, activeDoc]);
     const out = await Effect.runPromise(listCalls(mongo));

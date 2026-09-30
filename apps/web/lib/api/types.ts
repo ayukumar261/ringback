@@ -15,6 +15,7 @@ export interface Call {
   ended_at?: number // unix ms
   duration_ms?: number
   audio?: string // recording file name, set on call.ended and empty when recording was off
+  audio_started_at?: number // unix ms of the recording's first frame
 }
 
 // Turn is one transcript turn as served by GET /calls/:room/turns.
@@ -24,6 +25,9 @@ export interface Turn {
   role: "user" | "agent" | "tool"
   text: string
   at: number // unix ms
+  started_at?: number // unix ms on the recording's clock
+  ended_at?: number // unix ms on the recording's clock
+  duration_ms?: number
 }
 
 // CallStartedEvent mirrors the call.started SSE payload.
@@ -45,9 +49,10 @@ export interface CallEndedEvent {
   ended_at: number
   duration_ms: number
   audio?: string
+  audio_started_at?: number
 }
 
-// CallTurnEvent mirrors the call.turn SSE payload; a repeated seq corrects earlier text.
+// CallTurnEvent mirrors the call.turn SSE payload; a repeated seq updates text or timing.
 export interface CallTurnEvent extends Turn {
   event: "call.turn"
 }

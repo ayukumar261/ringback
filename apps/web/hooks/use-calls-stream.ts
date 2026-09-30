@@ -45,6 +45,9 @@ function applyEvent(
           ended_at: event.ended_at,
           duration_ms: event.duration_ms,
           audio: event.audio ?? "",
+          ...(event.audio_started_at !== undefined && {
+            audio_started_at: event.audio_started_at,
+          }),
         }
   return [...prev.filter((c) => c.room !== event.room), next].sort(
     byStartedAtDesc
@@ -55,15 +58,21 @@ function applyTurn(
   turns: readonly Turn[] | undefined,
   event: CallTurnEvent
 ): Turn[] {
+  const prev = turns ?? []
+  const existing = prev.find((t) => t.seq === event.seq)
   const turn: Turn = {
+    ...existing,
     room: event.room,
     seq: event.seq,
     role: event.role,
     text: event.text,
     at: event.at,
+    ...(event.started_at !== undefined && { started_at: event.started_at }),
+    ...(event.ended_at !== undefined && { ended_at: event.ended_at }),
+    ...(event.duration_ms !== undefined && { duration_ms: event.duration_ms }),
   }
-  // like the server's upsert by (room, seq): a correction replaces its turn
-  return [...(turns ?? []).filter((t) => t.seq !== turn.seq), turn].sort(
+  // Like the server's upsert, a correction keeps any timing it did not supply.
+  return [...prev.filter((t) => t.seq !== turn.seq), turn].sort(
     (a, b) => a.seq - b.seq
   )
 }
