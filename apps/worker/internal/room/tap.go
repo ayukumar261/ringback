@@ -3,6 +3,7 @@ package room
 import (
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
@@ -20,6 +21,8 @@ type tap struct {
 	caller  [][]byte // decoded caller frames waiting for a tick, oldest first
 	tone    []byte   // key press audio still waiting to be mixed into the agent channel
 	stopped bool     // set after a write error so the call outlives the recording
+	started time.Time
+	frames  int64
 }
 
 // newTap wraps a writer whose left channel is the caller and right channel the agent.
@@ -91,7 +94,32 @@ func (t *tap) record(agent []byte) {
 	if err := t.w.Write(audio.Interleave(caller, agent)); err != nil {
 		t.stopped = true
 		t.log.Warn("stopping call audio recording", "err", err)
+		return
 	}
+	if t.frames == 0 {
+		t.started = time.Now()
+	}
+	t.frames++
+}
+
+// StartedAt reports when the first frame was recorded, or zero before recording starts.
+func (t *tap) StartedAt() time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.started
+}
+
+// Recorded reports the duration successfully written at the playout cadence.
+func (t *tap) Recorded() time.Duration {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return time.Duration(t.frames) * audio.FrameDuration
 }
 
 // close patches the wav header and closes the file.

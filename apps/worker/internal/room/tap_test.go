@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
@@ -160,11 +161,65 @@ func TestTapPressClampsLoudAgent(t *testing.T) {
 
 func TestTapNilIsInert(t *testing.T) {
 	var rec *tap
+	if got := rec.StartedAt(); !got.IsZero() {
+		t.Fatalf("nil tap started at %v, want zero", got)
+	}
+	if got := rec.Recorded(); got != 0 {
+		t.Fatalf("nil tap recorded %v, want zero", got)
+	}
 	rec.offer(toneFrame(lowHz))
 	rec.press('1')
 	rec.record(make([]byte, audio.FrameBytes))
 	if err := rec.close(); err != nil {
 		t.Fatalf("nil tap close returned %v", err)
+	}
+}
+
+func TestTapReportsRecordingClock(t *testing.T) {
+	rec, _ := newTestTap(t, discard)
+	if got := rec.StartedAt(); !got.IsZero() {
+		t.Fatalf("new tap started at %v, want zero", got)
+	}
+	if got := rec.Recorded(); got != 0 {
+		t.Fatalf("new tap recorded %v, want zero", got)
+	}
+
+	frame := make([]byte, audio.FrameBytes)
+	before := time.Now()
+	rec.record(frame)
+	after := time.Now()
+	started := rec.StartedAt()
+	if started.Before(before) || started.After(after) {
+		t.Fatalf("started at %v, want first write instant between %v and %v", started, before, after)
+	}
+	for range 4 {
+		rec.record(frame)
+	}
+	if got, want := rec.StartedAt(), started; !got.Equal(want) {
+		t.Fatalf("started at changed to %v, want %v", got, want)
+	}
+	if got, want := rec.Recorded(), 5*audio.FrameDuration; got != want {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+}
+
+func TestRoomPassesThroughRecordingClock(t *testing.T) {
+	var off Room
+	if got := off.StartedAt(); !got.IsZero() {
+		t.Fatalf("room without recording started at %v, want zero", got)
+	}
+	if got := off.Recorded(); got != 0 {
+		t.Fatalf("room without recording recorded %v, want zero", got)
+	}
+
+	rec, _ := newTestTap(t, discard)
+	rm := Room{tap: rec}
+	rec.record(make([]byte, audio.FrameBytes))
+	if got, want := rm.StartedAt(), rec.StartedAt(); !got.Equal(want) {
+		t.Fatalf("room started at %v, want tap start %v", got, want)
+	}
+	if got, want := rm.Recorded(), audio.FrameDuration; got != want {
+		t.Fatalf("room recorded %v, want %v", got, want)
 	}
 }
 
@@ -177,7 +232,11 @@ func TestTapStopsAfterWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.record(frame) // the file is closed so this write fails
+	stoppedAt := rec.Recorded()
 	rec.record(frame) // and this one is skipped
+	if got := rec.Recorded(); got != stoppedAt {
+		t.Errorf("recorded advanced after stop from %v to %v", stoppedAt, got)
+	}
 
 	if n := strings.Count(logged.String(), "stopping call audio recording"); n != 1 {
 		t.Errorf("logged the stop %d times, want once", n)

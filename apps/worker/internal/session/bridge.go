@@ -26,6 +26,8 @@ type roomHandle interface {
 	Enqueue(pcm []byte)
 	Flush()
 	SendDTMF(digits string) error
+	StartedAt() time.Time
+	Recorded() time.Duration
 	Buffered() time.Duration
 	Done() <-chan struct{}
 	Err() error

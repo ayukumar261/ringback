@@ -185,6 +185,12 @@ func (r *Room) Flush() { r.buf.Flush() }
 // AudioFile reports the recording's file name inside AudioDir, empty when recording is off.
 func (r *Room) AudioFile() string { return r.audio }
 
+// StartedAt reports when the first recording frame was written, or zero when recording is off.
+func (r *Room) StartedAt() time.Time { return r.tap.StartedAt() }
+
+// Recorded reports how much call audio has been written, or zero when recording is off.
+func (r *Room) Recorded() time.Duration { return r.tap.Recorded() }
+
 // Buffered reports how much queued agent audio has not yet played out.
 func (r *Room) Buffered() time.Duration { return r.buf.Buffered() }
 

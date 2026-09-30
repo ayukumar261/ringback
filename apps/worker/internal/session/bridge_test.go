@@ -78,6 +78,10 @@ func newFakeRoom() *fakeRoom {
 
 func (f *fakeRoom) CallerPCM() <-chan []byte { return f.pcm }
 
+func (f *fakeRoom) StartedAt() time.Time { return time.Time{} }
+
+func (f *fakeRoom) Recorded() time.Duration { return 0 }
+
 func (f *fakeRoom) Enqueue(pcm []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
