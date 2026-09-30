@@ -3,15 +3,20 @@ package room
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
 	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
 )
 
@@ -23,7 +28,9 @@ func newTestTap(t *testing.T, log *slog.Logger) (*tap, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newTap(w, log), path
+	rec := &tap{w: w, log: log, speech: &fakeSpeechAnalyzer{d: speech.NewDetector(&fakeVoice{})}}
+	t.Cleanup(func() { rec.close() })
+	return rec, path
 }
 
 // deinterleave splits one stereo frame into its left and right mono frames.
@@ -234,14 +241,14 @@ func TestRoomPassesThroughRecordingClock(t *testing.T) {
 func TestTapSpeechMatchesStereoWAV(t *testing.T) {
 	tone := toneFrame(lowHz)
 	loud := audio.Mix(tone, audio.Mix(tone, tone))
-	bursts := []audio.SpeechSegment{
-		{Started: 200 * time.Millisecond, Ended: 500 * time.Millisecond},
-		{Started: 800 * time.Millisecond, Ended: 900 * time.Millisecond},
+	bursts := []speech.Segment{
+		{Started: 168 * time.Millisecond, Ended: 500 * time.Millisecond},
+		{Started: 768 * time.Millisecond, Ended: 900 * time.Millisecond},
 	}
 	for _, tt := range []struct {
 		name          string
 		caller, agent []byte
-		want          []audio.SpeechSegment
+		want          []speech.Segment
 	}{
 		{name: "caller bursts", caller: tone, want: bursts},
 		{name: "silence", agent: tone},
@@ -269,7 +276,7 @@ func TestTapSpeechMatchesStereoWAV(t *testing.T) {
 			}
 			// Replay the saved channels through the pure detector, independently of
 			// offers and the tap's wall clock, to check against what reached the WAV.
-			detector := audio.NewSpeechDetector(nil)
+			detector := speech.NewDetector(&fakeVoice{})
 			for offset := 44; offset < len(b); offset += 2 * audio.FrameBytes {
 				left, right := deinterleave(b[offset : offset+2*audio.FrameBytes])
 				detector.Record(left, right)
@@ -292,13 +299,13 @@ func TestTapSpeechUsesQueuedFramesWhenTheyAreWritten(t *testing.T) {
 	for range 5 {
 		rec.record(nil)
 	}
-	for range 3 {
+	for range 4 {
 		rec.offer(toneFrame(lowHz))
 	}
-	for range 3 {
+	for range 4 {
 		rec.record(nil)
 	}
-	want := []audio.SpeechSegment{{Started: 100 * time.Millisecond, Ended: 160 * time.Millisecond}}
+	want := []speech.Segment{{Started: 68 * time.Millisecond, Ended: 180 * time.Millisecond}}
 	if got := rec.Speech(); !slices.Equal(got, want) {
 		t.Fatalf("queued speech = %v, want written positions %v", got, want)
 	}
@@ -317,7 +324,7 @@ func TestTapSpeechUsesQueuedFramesWhenTheyAreWritten(t *testing.T) {
 
 func TestTapSpeechIgnoresFailedWritesAndSurvivesClose(t *testing.T) {
 	rec, _ := newTestTap(t, discard)
-	for range 3 {
+	for range 4 {
 		rec.offer(toneFrame(lowHz))
 		rec.record(nil)
 	}
@@ -328,13 +335,13 @@ func TestTapSpeechIgnoresFailedWritesAndSurvivesClose(t *testing.T) {
 		rec.offer(toneFrame(lowHz))
 		rec.record(nil)
 	}
-	want := []audio.SpeechSegment{{Started: 0, Ended: 60 * time.Millisecond}}
+	want := []speech.Segment{{Started: 0, Ended: 80 * time.Millisecond}}
 	if got := rec.Speech(); !slices.Equal(got, want) {
 		t.Fatalf("speech after write failure = %v, want saved frames %v", got, want)
 	}
 }
 
-func TestTapSpeechAndRecordingShareLock(t *testing.T) {
+func TestTapSpeechAndRecordingConcurrent(t *testing.T) {
 	rec, _ := newTestTap(t, discard)
 	defer rec.close()
 	tone := toneFrame(lowHz)
@@ -367,7 +374,7 @@ func TestTapStopsAfterWriteError(t *testing.T) {
 	rec, path := newTestTap(t, slog.New(slog.NewTextHandler(&logged, nil)))
 	frame := make([]byte, audio.FrameBytes)
 	rec.record(frame)
-	if err := rec.close(); err != nil {
+	if err := rec.w.Close(); err != nil {
 		t.Fatal(err)
 	}
 	rec.record(frame) // the file is closed so this write fails
@@ -386,5 +393,133 @@ func TestTapStopsAfterWriteError(t *testing.T) {
 	}
 	if len(b) != 44+2*audio.FrameBytes {
 		t.Errorf("file is %d bytes, want the one frame written before the error", len(b))
+	}
+}
+
+// Deterministic classification for recording-clock tests; acoustic accuracy is
+// covered by the real speech fixtures in the speech package.
+type fakeVoice struct{ position time.Duration }
+
+func (v *fakeVoice) Process(caller, agent []byte) ([]speech.VoiceFrame, error) {
+	p := 0.0
+	// Identical channels represent an explicitly annotated echo-only interval in
+	// these clock tests. This is not an acoustic echo detector.
+	if !bytes.Equal(caller, agent) {
+		for _, b := range caller {
+			if b != 0 {
+				p = 1
+				break
+			}
+		}
+	}
+	f := speech.VoiceFrame{Started: v.position, Ended: v.position + audio.FrameDuration, Probability: p}
+	v.position += audio.FrameDuration
+	return []speech.VoiceFrame{f}, nil
+}
+func (*fakeVoice) Flush() ([]speech.VoiceFrame, error) { return nil, nil }
+func (*fakeVoice) Close()                              {}
+
+type fakeSpeechAnalyzer struct {
+	mu sync.Mutex
+	d  *speech.Detector
+}
+
+func (a *fakeSpeechAnalyzer) Record(caller, agent []byte) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.d.Record(caller, agent)
+}
+func (a *fakeSpeechAnalyzer) Take() []speech.Segment {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.d.Take()
+}
+func (a *fakeSpeechAnalyzer) Close() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.d.Finish()
+}
+
+func (a *fakeSpeechAnalyzer) Stop() { a.Close() }
+
+// Run explicitly with -run '^$' -bench BenchmarkTapConcurrentSpeech -benchtime=1x.
+// This exercises real-time pacing, native inference, and WAV writes together.
+func BenchmarkTapConcurrentSpeech(b *testing.B) {
+	source, rate, err := wav.Read("../speech/testdata/caller.wav")
+	if err != nil || rate != 16000 {
+		b.Fatal(err, rate)
+	}
+	pcm := make([]byte, len(source)*3)
+	for i := 0; i < len(source); i += 2 {
+		for j := range 3 {
+			copy(pcm[3*i+2*j:], source[i:i+2])
+		}
+	}
+	for _, calls := range []int{1, 8, 32} {
+		b.Run(fmt.Sprint(calls), func(b *testing.B) {
+			for range b.N {
+				var taps []*tap
+				var paths []string
+				dir := b.TempDir()
+				for n := range calls {
+					path := fmt.Sprintf("%s/%d.wav", dir, n)
+					w, err := wav.NewWriter(path, audio.SampleRate, 2)
+					if err != nil {
+						b.Fatal(err)
+					}
+					taps = append(taps, newTap(w, discard))
+					paths = append(paths, path)
+				}
+				var before, after syscall.Rusage
+				syscall.Getrusage(syscall.RUSAGE_SELF, &before)
+				start := time.Now()
+				tick := time.NewTicker(audio.FrameDuration)
+				var latencies []time.Duration
+				var lastTick time.Time
+				skippedTicks := 0
+				for i := 0; i < len(pcm); i += audio.FrameBytes {
+					tickAt := <-tick.C
+					if !lastTick.IsZero() {
+						skippedTicks += max(0, int((tickAt.Sub(lastTick)+audio.FrameDuration/2)/audio.FrameDuration)-1)
+					}
+					lastTick = tickAt
+					t0 := time.Now()
+					for _, tap := range taps {
+						tap.offer(pcm[i : i+audio.FrameBytes])
+						tap.record(nil)
+					}
+					latencies = append(latencies, time.Since(t0))
+				}
+				tick.Stop()
+				for n, tap := range taps {
+					tap.close()
+					if len(tap.Speech()) == 0 {
+						b.Fatal("analysis failed under load")
+					}
+					info, err := os.Stat(paths[n])
+					if err != nil {
+						b.Fatal(err)
+					}
+					if info.Size() != 44+int64(len(pcm)*2) || tap.Recorded() != 10*time.Second {
+						b.Fatal("WAV gaps or clock drift")
+					}
+				}
+				syscall.Getrusage(syscall.RUSAGE_SELF, &after)
+				cpu := func(r syscall.Rusage) float64 {
+					return float64(r.Utime.Sec+r.Stime.Sec) + float64(r.Utime.Usec+r.Stime.Usec)/1e6
+				}
+				elapsed := time.Since(start).Seconds()
+				slices.Sort(latencies)
+				rss := float64(after.Maxrss)
+				if runtime.GOOS == "darwin" {
+					rss /= 1024
+				}
+				b.ReportMetric((cpu(after)-cpu(before))/elapsed*100, "CPU-percent")
+				b.ReportMetric(rss/1024, "peak-RSS-MiB")
+				b.ReportMetric(float64(skippedTicks), "skipped-ticks")
+				b.ReportMetric(float64(latencies[len(latencies)*99/100].Microseconds()), "write-p99-us")
+				b.ReportMetric(float64(latencies[len(latencies)-1].Microseconds()), "write-max-us")
+			}
+		})
 	}
 }

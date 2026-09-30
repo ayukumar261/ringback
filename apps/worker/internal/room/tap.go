@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
 	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
 )
 
@@ -23,12 +24,19 @@ type tap struct {
 	stopped bool     // set after a write error so the call outlives the recording
 	started time.Time
 	frames  int64
-	speech  *audio.SpeechDetector
+	speech  speechAnalyzer
+}
+
+type speechAnalyzer interface {
+	Record([]byte, []byte)
+	Take() []speech.Segment
+	Stop()
+	Close()
 }
 
 // newTap wraps a writer whose left channel is the caller and right channel the agent.
 func newTap(w *wav.Writer, log *slog.Logger) *tap {
-	return &tap{log: log, w: w, speech: audio.NewSpeechDetector(nil)}
+	return &tap{log: log, w: w, speech: speech.NewAnalyzer(log)}
 }
 
 // offer appends a caller frame to the queue, dropping the oldest once the cap is reached.
@@ -94,6 +102,7 @@ func (t *tap) record(agent []byte) {
 	}
 	if err := t.w.Write(audio.Interleave(caller, agent)); err != nil {
 		t.stopped = true
+		t.speech.Stop()
 		t.log.Warn("stopping call audio recording", "err", err)
 		return
 	}
@@ -125,13 +134,11 @@ func (t *tap) Recorded() time.Duration {
 }
 
 // Speech consumes caller segments for one transcript, closing any open speech
-// at the current recording position under the same lock as the WAV writes.
-func (t *tap) Speech() []audio.SpeechSegment {
+// at the current recording position. Inference waits without holding the WAV lock.
+func (t *tap) Speech() []speech.Segment {
 	if t == nil {
 		return nil
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	return t.speech.Take()
 }
 
@@ -141,6 +148,9 @@ func (t *tap) close() error {
 		return nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.w.Close()
+	t.stopped = true
+	err := t.w.Close()
+	t.mu.Unlock()
+	t.speech.Close()
+	return err
 }

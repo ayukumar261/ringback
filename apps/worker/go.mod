@@ -10,6 +10,7 @@ require (
 	github.com/pion/rtp v1.10.2
 	github.com/pion/webrtc/v4 v4.2.15
 	github.com/redis/go-redis/v9 v9.20.0
+	github.com/yalue/onnxruntime_go v1.36.0
 	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 )
 

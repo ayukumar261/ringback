@@ -14,6 +14,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
 	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
 )
 
@@ -193,7 +194,7 @@ func (r *Room) Recorded() time.Duration { return r.tap.Recorded() }
 
 // Speech consumes caller speech since the last transcript, as recording offsets.
 // Any open segment ends at the current recorded position. Recording off yields nil.
-func (r *Room) Speech() []audio.SpeechSegment { return r.tap.Speech() }
+func (r *Room) Speech() []speech.Segment { return r.tap.Speech() }
 
 // Buffered reports how much queued agent audio has not yet played out.
 func (r *Room) Buffered() time.Duration { return r.buf.Buffered() }

@@ -47,7 +47,16 @@ jobs:
           cache-dependency-path: apps/worker/go.sum
 
       - name: Install C libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libopus-dev libopusfile-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libopus-dev libopusfile-dev build-essential curl meson ninja-build libabsl-dev
+
+      - name: Install pinned speech runtime
+        run: |
+          scripts/install-speexdsp.sh "$RUNNER_TEMP/speech"
+          scripts/install-webrtc.sh "$RUNNER_TEMP/speech"
+          scripts/install-onnxruntime.sh "$RUNNER_TEMP/speech"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/speech/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/speech/lib" >> "$GITHUB_ENV"
+          echo "ONNXRUNTIME_SHARED_LIBRARY_PATH=$RUNNER_TEMP/speech/lib/libonnxruntime.so" >> "$GITHUB_ENV"
 
       - name: Vet
         run: go vet ./...

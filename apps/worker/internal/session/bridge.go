@@ -12,6 +12,7 @@ import (
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
 )
 
 const (
@@ -28,7 +29,7 @@ type roomHandle interface {
 	SendDTMF(digits string) error
 	StartedAt() time.Time
 	Recorded() time.Duration
-	Speech() []audio.SpeechSegment
+	Speech() []speech.Segment
 	Buffered() time.Duration
 	Done() <-chan struct{}
 	Err() error

@@ -18,6 +18,7 @@ import (
 	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
 )
 
 // discard is a logger for paths whose output the tests do not assert on.
@@ -74,8 +75,8 @@ type fakeRoom struct {
 	started  time.Time
 	recorded time.Duration
 	queued   time.Duration
-	speech   []audio.SpeechSegment
-	detector *audio.SpeechDetector
+	speech   []speech.Segment
+	detector *speech.Detector
 }
 
 func newFakeRoom() *fakeRoom {
@@ -96,7 +97,7 @@ func (f *fakeRoom) Recorded() time.Duration {
 	return f.recorded
 }
 
-func (f *fakeRoom) Speech() []audio.SpeechSegment {
+func (f *fakeRoom) Speech() []speech.Segment {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.detector != nil {

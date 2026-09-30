@@ -1,14 +1,27 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
+	"github.com/ayukumar261/ringback/apps/worker/internal/room"
+	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
+	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
+	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 func recordingRoom() *fakeRoom {
@@ -272,4 +285,286 @@ func TestToolSpanExcludesDelayPublishingItsText(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSpan(t, got[len(got)-1], rm.started.Add(time.Second), rm.started.Add(1500*time.Millisecond))
+}
+
+func speechRoom() *fakeRoom {
+	rm := newFakeRoom()
+	rm.started = time.UnixMilli(1753795200000)
+	rm.detector = speech.NewDetector(&fakeVoice{})
+	return rm
+}
+
+func speechTone(amplitude float64) []byte {
+	pcm := make([]byte, audio.FrameBytes)
+	for i := range audio.FrameSamples {
+		sample := int16(amplitude * math.Sin(2*math.Pi*500*float64(i)/audio.SampleRate))
+		binary.LittleEndian.PutUint16(pcm[2*i:], uint16(sample))
+	}
+	return pcm
+}
+
+func recordCallerFrames(rm *fakeRoom, caller, agent []byte, n int) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	for range n {
+		rm.detector.Record(caller, agent)
+		rm.recorded += audio.FrameDuration
+		rm.queued = max(0, rm.queued-audio.FrameDuration)
+	}
+}
+
+func TestUserTurnJoinsOnlySpeechSincePreviousTranscript(t *testing.T) {
+	rm := recordingRoom()
+	applyEvent, got := timingDriver(t, rm)
+	rm.speech = []speech.Segment{
+		{Started: 100 * time.Millisecond, Ended: 200 * time.Millisecond},
+		{Started: 300 * time.Millisecond, Ended: 500 * time.Millisecond},
+	}
+	applyEvent(agent.UserTurn{Text: "Hello, can you help?"})
+	assertSpan(t, (*got)[0], rm.started.Add(100*time.Millisecond), rm.started.Add(500*time.Millisecond))
+	if (*got)[0].Role != events.RoleUser || (*got)[0].Ended.Sub((*got)[0].Started) != 400*time.Millisecond {
+		t.Fatalf("user turn = %+v", (*got)[0])
+	}
+	applyEvent(agent.UserTurn{Text: "A turn with no detected speech"})
+	assertSpan(t, (*got)[1], time.Time{}, time.Time{})
+	rm.speech = []speech.Segment{{Started: 700 * time.Millisecond, Ended: 800 * time.Millisecond}}
+	applyEvent(agent.UserTurn{Text: "Next utterance"})
+	assertSpan(t, (*got)[2], rm.started.Add(700*time.Millisecond), rm.started.Add(800*time.Millisecond))
+}
+
+func TestUserTurnUsesSpeechEdgesInsteadOfTranscriptArrival(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	recordCallerFrames(rm, nil, nil, 10)
+	recordCallerFrames(rm, speechTone(5000), nil, 15)
+	recordCallerFrames(rm, nil, nil, 100) // ASR arrives two seconds after speech stopped
+	applyEvent(agent.UserTurn{Text: "What are your hours?"})
+	assertSpan(t, (*got)[0], rm.started.Add(168*time.Millisecond), rm.started.Add(500*time.Millisecond))
+	if rm.Recorded() != 2500*time.Millisecond {
+		t.Fatal("test did not delay the transcript past the speech")
+	}
+}
+
+func TestUserTurnClosesOpenSpeechAndDoesNotReuseIt(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	tone := speechTone(5000)
+	recordCallerFrames(rm, tone, nil, 6)
+	applyEvent(agent.UserTurn{Text: "First part"})
+	assertSpan(t, (*got)[0], rm.started, rm.started.Add(120*time.Millisecond))
+	recordCallerFrames(rm, tone, nil, 5)
+	applyEvent(agent.UserTurn{Text: "Second part"})
+	assertSpan(t, (*got)[1], rm.started.Add(120*time.Millisecond), rm.started.Add(220*time.Millisecond))
+	applyEvent(agent.UserTurn{Text: "No new frames"})
+	assertSpan(t, (*got)[2], time.Time{}, time.Time{})
+}
+
+func TestCallerBargeInStartsBeforeAgentEnds(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	agentTone := speechTone(3000)
+	callerTone := speechTone(12000)
+	recordCallerFrames(rm, nil, nil, 10)
+	applyEvent(agent.AgentTurn{Text: "Let me explain", EventID: 1})
+	applyEvent(agent.Audio{PCM: pcmFrames(50), EventID: 1})
+	recordCallerFrames(rm, nil, agentTone, 5)
+	recordCallerFrames(rm, callerTone, agentTone, 5)
+	applyEvent(agent.Interruption{EventID: 2})
+	applyEvent(agent.UserTurn{Text: "Stop"})
+	var agentTurn, userTurn events.Turn
+	for _, turn := range *got {
+		if turn.Role == events.RoleAgent {
+			agentTurn = turn
+		} else if turn.Role == events.RoleUser {
+			userTurn = turn
+		}
+	}
+	assertSpan(t, agentTurn, rm.started.Add(200*time.Millisecond), rm.started.Add(400*time.Millisecond))
+	assertSpan(t, userTurn, rm.started.Add(268*time.Millisecond), rm.started.Add(400*time.Millisecond))
+	if !userTurn.Started.Before(agentTurn.Ended) {
+		t.Fatalf("caller start %v does not overlap agent end %v", userTurn.Started, agentTurn.Ended)
+	}
+}
+
+func TestEchoOnlyUserTranscriptHasNoSpan(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	tone := speechTone(5000)
+	recordCallerFrames(rm, tone, tone, 20)
+	applyEvent(agent.UserTurn{Text: "Text still reaches the transcript"})
+	if len(*got) != 1 || (*got)[0].Text != "Text still reaches the transcript" {
+		t.Fatalf("missing user transcript: %v", *got)
+	}
+	assertSpan(t, (*got)[0], time.Time{}, time.Time{})
+}
+
+func TestUserTurnAfterHangupKeepsRecordedSpeech(t *testing.T) {
+	rm := speechRoom()
+	recordCallerFrames(rm, speechTone(5000), nil, 5)
+	rm.kill(nil)
+	turns, got := newTestTurnLog("call-a")
+	err := apply(agent.UserTurn{Text: "Bye"}, newFakeConv(), rm, turns, &agentPlayout{turns: turns}, true, instant, discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSpan(t, (*got)[0], rm.started, rm.started.Add(100*time.Millisecond))
+}
+
+// Deterministic classification for recording-clock tests; acoustic accuracy is
+// covered by the real speech fixtures in the speech package.
+type fakeVoice struct{ position time.Duration }
+
+func (v *fakeVoice) Process(caller, agent []byte) ([]speech.VoiceFrame, error) {
+	p := 0.0
+	// Identical channels represent an explicitly annotated echo-only interval in
+	// these clock tests. This is not an acoustic echo detector.
+	if !bytes.Equal(caller, agent) {
+		for _, b := range caller {
+			if b != 0 {
+				p = 1
+				break
+			}
+		}
+	}
+	f := speech.VoiceFrame{Started: v.position, Ended: v.position + audio.FrameDuration, Probability: p}
+	v.position += audio.FrameDuration
+	return []speech.VoiceFrame{f}, nil
+}
+func (*fakeVoice) Flush() ([]speech.VoiceFrame, error) { return nil, nil }
+func (*fakeVoice) Close()                              {}
+
+// A controlled call through a real LiveKit server, Opus/RTP, recording, detector,
+// and session turn handling. No phone recipient or hosted voice agent is used.
+// Start LiveKit --dev and set VAD_LIVEKIT_URL to run this timing regression.
+func TestLiveSpeechInterruption(t *testing.T) {
+	url := os.Getenv("VAD_LIVEKIT_URL")
+	if url == "" {
+		t.Skip("set VAD_LIVEKIT_URL for the real-media call test")
+	}
+	dir := t.TempDir()
+	name := fmt.Sprintf("call-speech-test-%d", time.Now().Unix())
+	rm, err := room.Join(context.Background(), room.Opts{URL: url, APIKey: "devkey", APISecret: "secret", RoomName: name, AudioDir: dir, Log: discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rm.Close()
+	caller, err := lksdk.ConnectToRoom(url, lksdk.ConnectInfo{APIKey: "devkey", APISecret: "secret", RoomName: name, ParticipantIdentity: "test-caller"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer caller.Disconnect()
+	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = caller.LocalParticipant.PublishTrack(track, &lksdk.TrackPublicationOptions{Name: "caller", Source: livekit.TrackSource_MICROPHONE}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for range rm.CallerPCM() {
+		}
+	}()
+	load := func(name string, gain float64) []byte {
+		t.Helper()
+		pcm, rate, err := wav.Read("../speech/testdata/" + name + ".wav")
+		if err != nil || rate != 16000 {
+			t.Fatal(err, rate)
+		}
+		out := make([]byte, len(pcm)*3)
+		for i := 0; i < len(pcm); i += 2 {
+			v := int16(binary.LittleEndian.Uint16(pcm[i:]))
+			for j := range 3 {
+				binary.LittleEndian.PutUint16(out[3*i+2*j:], uint16(int16(float64(v)*gain)))
+			}
+		}
+		return out
+	}
+	callerPCM, playback := load("caller", .1), load("agent", 1)
+	encoder, err := audio.NewEncoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	turns, got := newTestTurnLog(name)
+	turns.now = time.Now
+	playout := &agentPlayout{turns: turns}
+	conv := newFakeConv()
+	applyEvent := func(ev agent.Event, ended bool) {
+		t.Helper()
+		if err := apply(ev, conv, rm, turns, playout, ended, instant, discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Establish the media stream before measuring fixture-relative times.
+	ticker := time.NewTicker(audio.FrameDuration)
+	defer ticker.Stop()
+	silence := make([]byte, audio.FrameBytes)
+	for range 25 {
+		<-ticker.C
+		packet, err := encoder.Encode(silence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = track.WriteSample(media.Sample{Data: packet, Duration: audio.FrameDuration}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := rm.Recorded()
+	applyEvent(agent.AgentTurn{Text: "Recorded reference speech", EventID: 1}, false)
+	applyEvent(agent.Audio{PCM: playback, EventID: 1}, false)
+	for i := 0; i < len(callerPCM); i += audio.FrameBytes {
+		<-ticker.C
+		packet, err := encoder.Encode(callerPCM[i : i+audio.FrameBytes])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = track.WriteSample(media.Sample{Data: packet, Duration: audio.FrameDuration}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if i/audio.FrameBytes == 200 {
+			applyEvent(agent.Interruption{EventID: 2}, false)
+		}
+	}
+	rm.Close()
+	applyEvent(agent.UserTurn{Text: "Recorded caller speech; final transcript after hangup"}, true)
+	var userTurn, agentTurn events.Turn
+	for _, turn := range *got {
+		if turn.Role == events.RoleUser {
+			userTurn = turn
+		} else {
+			agentTurn = turn
+		}
+	}
+	if userTurn.Started.IsZero() || !userTurn.Started.Before(agentTurn.Ended) {
+		t.Fatalf("missing overlap: user=%+v agent=%+v", userTurn, agentTurn)
+	}
+	wantStart, wantEnd := rm.StartedAt().Add(start+3200*time.Millisecond), rm.StartedAt().Add(start+6800*time.Millisecond)
+	if userTurn.Started.Sub(wantStart).Abs() > 300*time.Millisecond || userTurn.Ended.Sub(wantEnd).Abs() > 300*time.Millisecond {
+		t.Fatalf("spans drifted from transmitted speech: user=%+v want=%v..%v", userTurn, wantStart, wantEnd)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, name+".wav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := (len(data) - 44) / 4
+	if time.Duration(samples)*time.Second/audio.SampleRate != rm.Recorded() {
+		t.Fatal("WAV and recording clock differ")
+	}
+	// Replay the saved samples, independently of RTP arrival and actor timing.
+	detector := speech.NewDetector(nil)
+	for offset := 44; offset < len(data); offset += audio.FrameBytes * 2 {
+		left, right := make([]byte, audio.FrameBytes), make([]byte, audio.FrameBytes)
+		for sample := range audio.FrameSamples {
+			copy(left[2*sample:], data[offset+4*sample:offset+4*sample+2])
+			copy(right[2*sample:], data[offset+4*sample+2:offset+4*sample+4])
+		}
+		detector.Record(left, right)
+	}
+	detector.Finish()
+	if detector.Err() != nil {
+		t.Fatal(detector.Err())
+	}
+	spans := detector.Take()
+	if len(spans) == 0 || !rm.StartedAt().Add(spans[0].Started).Equal(userTurn.Started) || !rm.StartedAt().Add(spans[len(spans)-1].Ended).Equal(userTurn.Ended) {
+		t.Fatalf("saved WAV disagrees with live span: %v vs %+v", spans, userTurn)
+	}
 }

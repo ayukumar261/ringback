@@ -1,50 +1,37 @@
 # syntax=docker/dockerfile:1
 
-# Build on the matching alpine variant so cgo links against musl like the runner
-FROM golang:1.26-alpine3.22 AS builder
-
-# Install the C toolchain plus the opus headers the cgo binding needs
-RUN apk add --no-cache build-base pkgconf opus-dev opusfile-dev
-
-# Set working directory
+# ONNX Runtime uses glibc. Build and run against the same Debian release.
+FROM golang:1.26-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config libopus-dev libopusfile-dev curl ca-certificates \
+    meson ninja-build libabsl-dev=20220623.1-1+deb12u2 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-
-# Copy module manifests; the glob tolerates the not-yet-existing go.sum
+COPY scripts/ scripts/
+RUN scripts/install-speexdsp.sh /opt/speech && scripts/install-webrtc.sh /opt/speech \
+    && scripts/install-onnxruntime.sh /opt/speech
+ENV PKG_CONFIG_PATH=/opt/speech/lib/pkgconfig \
+    LD_LIBRARY_PATH=/opt/speech/lib \
+    ONNXRUNTIME_SHARED_LIBRARY_PATH=/opt/speech/lib/libonnxruntime.so
 COPY go.* ./
-
-# Download module dependencies
 RUN go mod download
-
-# Copy remaining source
 COPY . .
-
-# Compile every package so leaf packages stay buildable before main imports them
 RUN CGO_ENABLED=1 go build ./...
-
-# Receive the git SHA to stamp into the binary
 ARG GIT_SHA=dev
-
-# Build the worker binary with the version stamped in
 RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=${GIT_SHA}" -o /out/worker .
 
-# Begin a runner stage from base image
-FROM alpine:3.22 AS runner
-
-# Install the shared libraries the cgo binary loads at runtime
-RUN apk add --no-cache opus opusfile
-
-# Copy the compiled binary from the builder stage
+FROM debian:bookworm-slim AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopus0 libopusfile0 ca-certificates wget libabsl20220623=20220623.1-1+deb12u2 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/speech/lib/ /opt/speech/lib/
+COPY --from=builder /opt/speech/share/ /opt/speech/share/
+COPY internal/speech/models/LICENSE /opt/speech/share/licenses/silero/LICENSE
+ENV LD_LIBRARY_PATH=/opt/speech/lib \
+    ONNXRUNTIME_SHARED_LIBRARY_PATH=/opt/speech/lib/libonnxruntime.so
 COPY --from=builder /out/worker /usr/local/bin/worker
-
-# Own the recording directory so a fresh audio volume is writable by nobody
-RUN mkdir -p /audio && chown nobody:nobody /audio
-
-# Drop root privileges
+RUN mkdir -p /audio && chown nobody:nogroup /audio
 USER nobody
-
-# Probe the health endpoint with busybox wget
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD wget -qO /dev/null http://127.0.0.1:8080/healthz || exit 1
-
-# Launch the worker binary
 ENTRYPOINT ["worker"]

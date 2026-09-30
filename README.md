@@ -58,18 +58,18 @@ The worker starts a session when LiveKit creates a room whose name begins with `
 - Node.js 22, matching the API CI job and application Docker images.
 - pnpm 9, pinned to `9.0.0` in `package.json`.
 - Docker with Docker Compose for Redis and MongoDB.
-- For the voice worker: Go 1.26, a C compiler, `pkg-config`, and the Opus / Opusfile development libraries.
+- For the voice worker: Go 1.26, a C compiler, `pkg-config`, and the Opus / Opusfile development libraries. Caller speech timing uses Silero, ONNX Runtime, SpeexDSP, and WebRTC Audio Processing.
 - For real calls: a reachable LiveKit server and SIP service, a configured SIP provider, and an ElevenLabs API key and agent.
 
 Install the worker's native dependencies:
 
 ```sh
 # macOS (with Xcode Command Line Tools installed)
-brew install pkg-config opus opusfile
+brew install pkg-config opus opusfile speexdsp meson ninja abseil
 
 # Ubuntu / Debian
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libopus-dev libopusfile-dev
+sudo apt-get install -y build-essential pkg-config libopus-dev libopusfile-dev meson ninja-build libabsl-dev curl ca-certificates
 ```
 
 ### 1. Install dependencies
@@ -144,6 +144,29 @@ curl http://localhost:3001/calls
 ```
 
 ### 5. Connect the voice worker
+
+Install the pinned speech dependencies before running the worker locally. Docker includes them. From the repository root, on macOS arm64 or Linux x86_64/arm64:
+
+```sh
+speech_prefix="$HOME/.cache/ringback/speech"
+(
+  cd apps/worker
+  if [ "$(uname -s)" = Linux ]; then
+    scripts/install-speexdsp.sh "$speech_prefix"
+  fi
+  scripts/install-webrtc.sh "$speech_prefix"
+  scripts/install-onnxruntime.sh "$speech_prefix"
+)
+export PKG_CONFIG_PATH="$speech_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+if [ "$(uname -s)" = Darwin ]; then
+  export ONNXRUNTIME_SHARED_LIBRARY_PATH="$speech_prefix/lib/libonnxruntime.dylib"
+else
+  export LD_LIBRARY_PATH="$speech_prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export ONNXRUNTIME_SHARED_LIBRARY_PATH="$speech_prefix/lib/libonnxruntime.so"
+fi
+```
+
+Keep these exports in the terminal used to run the worker and its tests. Missing ONNX Runtime disables caller timestamps and logs a warning; call audio and transcript text continue. Restart the worker after fixing the library path.
 
 Before starting the worker, configure the services it connects to:
 
@@ -254,6 +277,10 @@ go vet ./...
 go test -race ./...
 go build ./...
 ```
+
+Caller speech detection lives in `internal/speech`, with each Go implementation paired with its test file: `echo` removes playback echo, `silero` classifies speech, `detector` groups timestamps, and `analyzer` runs analysis outside recording. The package owns its `models` and `testdata` directories, including attribution. `internal/audio` provides PCM helpers, Opus, DTMF, and playback buffering.
+
+For recording load checks, run `go test ./internal/room -run '^$' -bench BenchmarkTapConcurrentSpeech -benchtime=1x`. The optional `TestLiveSpeechInterruption` in `internal/session/timing_test.go` runs against a local LiveKit development server when `VAD_LIVEKIT_URL` is set (development credentials: `devkey` / `secret`).
 
 `pnpm dev` starts the API and dashboard through Turborepo. The Go worker is managed separately. For custom API environment values, use the explicit environment-loading command above. The root `pnpm check-types` command runs the API check; the web package uses a separate `typecheck` script.
 
