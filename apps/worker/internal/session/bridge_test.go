@@ -16,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/agent"
+	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/events"
 )
 
@@ -70,6 +71,9 @@ type fakeRoom struct {
 	buffered []time.Duration
 	bufCalls int
 	closed   bool
+	started  time.Time
+	recorded time.Duration
+	queued   time.Duration
 }
 
 func newFakeRoom() *fakeRoom {
@@ -78,20 +82,40 @@ func newFakeRoom() *fakeRoom {
 
 func (f *fakeRoom) CallerPCM() <-chan []byte { return f.pcm }
 
-func (f *fakeRoom) StartedAt() time.Time { return time.Time{} }
+func (f *fakeRoom) StartedAt() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.started
+}
 
-func (f *fakeRoom) Recorded() time.Duration { return 0 }
+func (f *fakeRoom) Recorded() time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.recorded
+}
+
+// advance writes queued audio (or silence) on the fake recording's clock.
+func (f *fakeRoom) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recorded += d
+	f.queued = max(0, f.queued-d)
+}
 
 func (f *fakeRoom) Enqueue(pcm []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = append(f.ops, "enqueue:"+string(pcm))
+	if !f.started.IsZero() {
+		f.queued += time.Duration(len(pcm)/2) * time.Second / audio.SampleRate
+	}
 }
 
 func (f *fakeRoom) Flush() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = append(f.ops, "flush")
+	f.queued = 0
 }
 
 // SendDTMF records the press unless the test scripted a failure.
@@ -111,7 +135,7 @@ func (f *fakeRoom) Buffered() time.Duration {
 	defer f.mu.Unlock()
 	f.bufCalls++
 	if len(f.buffered) == 0 {
-		return 0
+		return f.queued
 	}
 	d := f.buffered[0]
 	if len(f.buffered) > 1 {

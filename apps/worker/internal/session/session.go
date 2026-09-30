@@ -78,10 +78,11 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	elapsed := time.Since(start)
 	log.Info("session ended", "duration", elapsed.Round(time.Millisecond), "err", err)
 	opts.Events.CallEnded(events.End{
-		Room:     roomName,
-		At:       time.Now(),
-		Duration: elapsed,
-		Audio:    rm.AudioFile(),
+		Room:           roomName,
+		At:             time.Now(),
+		Duration:       elapsed,
+		Audio:          rm.AudioFile(),
+		AudioStartedAt: rm.StartedAt(),
 	})
 	return err
 }

@@ -31,10 +31,11 @@ type Start struct {
 
 // End describes how one call finished.
 type End struct {
-	Room     string
-	At       time.Time
-	Duration time.Duration
-	Audio    string
+	Room           string
+	At             time.Time
+	Duration       time.Duration
+	Audio          string
+	AudioStartedAt time.Time
 }
 
 // Turn roles.
@@ -46,11 +47,13 @@ const (
 
 // Turn is one utterance in a call's transcript.
 type Turn struct {
-	Room string
-	Seq  int    // 1-based position within the call; a repeated Seq corrects earlier text
-	Role string // RoleUser, RoleAgent, or RoleTool
-	Text string
-	At   time.Time
+	Room    string
+	Seq     int    // 1-based position within the call; a repeated Seq updates text or timing
+	Role    string // RoleUser, RoleAgent, or RoleTool
+	Text    string
+	At      time.Time
+	Started time.Time // first audio on the recording's clock, zero when unknown
+	Ended   time.Time // end of the audio on the same clock, zero until known
 }
 
 // xadder is the one Redis command the publisher needs.
@@ -94,14 +97,22 @@ func (p *Publisher) CallTurn(t Turn) {
 	if p == nil {
 		return
 	}
-	p.publish(map[string]any{
+	values := map[string]any{
 		"event": "call.turn",
 		"room":  t.Room,
 		"seq":   strconv.Itoa(t.Seq),
 		"role":  t.Role,
 		"text":  t.Text,
 		"at":    strconv.FormatInt(t.At.UnixMilli(), 10),
-	})
+	}
+	if !t.Started.IsZero() {
+		values["started_at"] = strconv.FormatInt(t.Started.UnixMilli(), 10)
+		if !t.Ended.IsZero() {
+			values["ended_at"] = strconv.FormatInt(t.Ended.UnixMilli(), 10)
+			values["duration_ms"] = strconv.FormatInt(t.Ended.Sub(t.Started).Milliseconds(), 10)
+		}
+	}
+	p.publish(values)
 }
 
 // CallEnded announces a finished call.
@@ -109,13 +120,17 @@ func (p *Publisher) CallEnded(e End) {
 	if p == nil {
 		return
 	}
-	p.publish(map[string]any{
+	values := map[string]any{
 		"event":       "call.ended",
 		"room":        e.Room,
 		"ended_at":    strconv.FormatInt(e.At.UnixMilli(), 10),
 		"duration_ms": strconv.FormatInt(e.Duration.Milliseconds(), 10),
 		"audio":       e.Audio,
-	})
+	}
+	if !e.AudioStartedAt.IsZero() {
+		values["audio_started_at"] = strconv.FormatInt(e.AudioStartedAt.UnixMilli(), 10)
+	}
+	p.publish(values)
 }
 
 // publish appends one entry, bounded by its own timeout so a Redis stall never holds a call.

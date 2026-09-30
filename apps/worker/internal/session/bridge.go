@@ -67,6 +67,8 @@ func bridge(ctx context.Context, rm roomHandle, conv agent.Conversation, turns *
 	}
 
 	rm.Close()
+	// A failed call or capped drain may have left some of the last response unplayed.
+	turns.end(turns.lastAgent.Seq, recordingPosition(rm))
 	<-upExited
 	conv.Close()
 	return classify(clientErr, rm.Err(), convErr, upErr)
@@ -87,12 +89,15 @@ func uplink(pcm <-chan []byte, send func([]byte) error) error {
 
 // downlink applies agent events to the room until the events close or a fatal server error and holds the conversation open for a short grace after the room ends.
 func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after clock, log *slog.Logger) error {
+	playout := &agentPlayout{turns: turns}
+	defer playout.finish(time.Time{})
 	roomDone := rm.Done()
 	var grace <-chan time.Time
 	roomEnded := false
 	for {
 		select {
 		case <-roomDone:
+			playout.finish(recordingPosition(rm))
 			// The final user transcript is often still in flight when the far end hangs up.
 			roomEnded = true
 			roomDone = nil
@@ -104,7 +109,7 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after cloc
 			if !ok {
 				return nil
 			}
-			if err := apply(ev, conv, rm, turns, roomEnded, after, log); err != nil {
+			if err := apply(ev, conv, rm, turns, playout, roomEnded, after, log); err != nil {
 				return err
 			}
 		}
@@ -112,25 +117,30 @@ func downlink(conv agent.Conversation, rm roomHandle, turns *turnLog, after cloc
 }
 
 // apply performs one agent event on the room and drops audio once the room has ended.
-func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLog, roomEnded bool, after clock, log *slog.Logger) error {
+func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLog, playout *agentPlayout, roomEnded bool, after clock, log *slog.Logger) error {
 	switch e := ev.(type) {
 	case agent.Audio:
-		if !roomEnded {
+		if !roomEnded && len(e.PCM) > 0 {
+			started := playoutPosition(rm)
 			rm.Enqueue(e.PCM)
+			playout.audio(e.EventID, started, playoutPosition(rm))
 		}
 	case agent.Interruption:
 		rm.Flush()
+		playout.finish(recordingPosition(rm))
 		log.Info("caller barge-in", "event_id", e.EventID)
 	case agent.UserTurn:
+		playout.finish(time.Time{})
 		turns.user(e.Text)
 		log.Info("user said", "text", e.Text)
 	case agent.AgentTurn:
-		turns.agent(e.Text)
+		playout.text(e)
 		log.Info("agent said", "text", e.Text)
 	case agent.Correction:
 		turns.correct(e.Corrected)
 		log.Info("agent cut off", "corrected", e.Corrected)
 	case agent.Tool:
+		playout.finish(time.Time{})
 		if err := answerTool(conv, rm, turns, e, after, log); err != nil {
 			return err
 		}
@@ -148,6 +158,7 @@ func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLo
 
 // answerTool runs one tool call and replies once its tones have played, treating a closed conversation as benign.
 func answerTool(conv agent.Conversation, rm roomHandle, turns *turnLog, call agent.Tool, after clock, log *slog.Logger) error {
+	started := recordingPosition(rm)
 	result, hold, err := runTool(rm, call)
 	if err != nil {
 		log.Warn("tool failed", "tool", call.Name, "err", err)
@@ -155,7 +166,7 @@ func answerTool(conv agent.Conversation, rm roomHandle, turns *turnLog, call age
 	} else {
 		log.Info("tool ran", "tool", call.Name, "result", result, "hold", hold)
 		// Record the press now so the transcript does not wait out the hold.
-		turns.tool(result)
+		turn := turns.tool(result, started)
 		// Answering early would let the agent talk over the tones still on the wire.
 		if hold > 0 {
 			select {
@@ -163,6 +174,12 @@ func answerTool(conv agent.Conversation, rm roomHandle, turns *turnLog, call age
 			case <-rm.Done():
 			}
 		}
+		ended := recordingPosition(rm)
+		// Publishing the initial turn may take time; that delay is not part of the tones.
+		if !started.IsZero() && ended.After(started.Add(hold)) {
+			ended = started.Add(hold)
+		}
+		turns.endTool(turn, ended)
 		err = conv.SendTool(call.ID, result, false)
 	}
 	if err != nil && !errors.Is(err, net.ErrClosed) {

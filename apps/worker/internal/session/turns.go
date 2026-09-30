@@ -12,7 +12,7 @@ type turnLog struct {
 	sink      func(events.Turn)
 	now       func() time.Time
 	next      int
-	lastAgent int // seq of the newest agent turn, 0 before any
+	lastAgent events.Turn // retained so timing updates and corrections keep the same seq and text
 }
 
 // newTurnLog builds a turnLog for room whose turns land on sink.
@@ -22,26 +22,66 @@ func newTurnLog(room string, sink func(events.Turn)) *turnLog {
 
 // user records what the person on the other end of the call said.
 func (t *turnLog) user(text string) {
-	t.emit(t.take(), events.RoleUser, text)
+	t.emit(t.turn(events.RoleUser, text, time.Time{}))
 }
 
 // agent records what the agent said.
-func (t *turnLog) agent(text string) {
-	t.lastAgent = t.take()
-	t.emit(t.lastAgent, events.RoleAgent, text)
+func (t *turnLog) agent(text string, started time.Time) int {
+	t.lastAgent = t.turn(events.RoleAgent, text, started)
+	t.emit(t.lastAgent)
+	return t.lastAgent.Seq
 }
 
 // tool records something the agent did on the call rather than said.
-func (t *turnLog) tool(text string) {
-	t.emit(t.take(), events.RoleTool, text)
+func (t *turnLog) tool(text string, started time.Time) events.Turn {
+	turn := t.turn(events.RoleTool, text, started)
+	t.emit(turn)
+	return turn
+}
+
+// start attaches the first audio position when text arrived before its audio.
+func (t *turnLog) start(seq int, at time.Time) {
+	if seq == 0 || seq != t.lastAgent.Seq || at.IsZero() || !t.lastAgent.Started.IsZero() {
+		return
+	}
+	t.lastAgent.Started = at
+	t.emit(t.lastAgent)
+}
+
+// end completes the newest agent span, or shortens it when queued audio was cut off.
+func (t *turnLog) end(seq int, at time.Time) {
+	if seq == 0 || seq != t.lastAgent.Seq || t.lastAgent.Started.IsZero() || at.IsZero() {
+		return
+	}
+	if at.Before(t.lastAgent.Started) {
+		at = t.lastAgent.Started
+	}
+	if !t.lastAgent.Ended.IsZero() && !at.Before(t.lastAgent.Ended) {
+		return
+	}
+	t.lastAgent.Ended = at
+	t.emit(t.lastAgent)
+}
+
+// endTool completes a press without changing which agent turn corrections target.
+func (t *turnLog) endTool(turn events.Turn, at time.Time) {
+	if turn.Started.IsZero() || at.IsZero() {
+		return
+	}
+	if at.Before(turn.Started) {
+		at = turn.Started
+	}
+	turn.Ended = at
+	t.emit(turn)
 }
 
 // correct re-emits the newest agent turn with what was actually said before the cut-off.
 func (t *turnLog) correct(text string) {
-	if t.lastAgent == 0 {
+	if t.lastAgent.Seq == 0 {
 		return
 	}
-	t.emit(t.lastAgent, events.RoleAgent, text)
+	t.lastAgent.Text = text
+	t.emit(t.lastAgent)
 }
 
 func (t *turnLog) take() int {
@@ -50,6 +90,10 @@ func (t *turnLog) take() int {
 	return seq
 }
 
-func (t *turnLog) emit(seq int, role, text string) {
-	t.sink(events.Turn{Room: t.room, Seq: seq, Role: role, Text: text, At: t.now()})
+func (t *turnLog) turn(role, text string, started time.Time) events.Turn {
+	return events.Turn{Room: t.room, Seq: t.take(), Role: role, Text: text, At: t.now(), Started: started}
+}
+
+func (t *turnLog) emit(turn events.Turn) {
+	t.sink(turn)
 }
