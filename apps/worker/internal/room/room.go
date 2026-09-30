@@ -191,6 +191,10 @@ func (r *Room) StartedAt() time.Time { return r.tap.StartedAt() }
 // Recorded reports how much call audio has been written, or zero when recording is off.
 func (r *Room) Recorded() time.Duration { return r.tap.Recorded() }
 
+// Speech consumes caller speech since the last transcript, as recording offsets.
+// Any open segment ends at the current recorded position. Recording off yields nil.
+func (r *Room) Speech() []audio.SpeechSegment { return r.tap.Speech() }
+
 // Buffered reports how much queued agent audio has not yet played out.
 func (r *Room) Buffered() time.Duration { return r.buf.Buffered() }
 

@@ -74,6 +74,8 @@ type fakeRoom struct {
 	started  time.Time
 	recorded time.Duration
 	queued   time.Duration
+	speech   []audio.SpeechSegment
+	detector *audio.SpeechDetector
 }
 
 func newFakeRoom() *fakeRoom {
@@ -92,6 +94,17 @@ func (f *fakeRoom) Recorded() time.Duration {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.recorded
+}
+
+func (f *fakeRoom) Speech() []audio.SpeechSegment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.detector != nil {
+		return f.detector.Take()
+	}
+	segments := f.speech
+	f.speech = nil
+	return segments
 }
 
 // advance writes queued audio (or silence) on the fake recording's clock.

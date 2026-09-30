@@ -21,8 +21,10 @@ func newTurnLog(room string, sink func(events.Turn)) *turnLog {
 }
 
 // user records what the person on the other end of the call said.
-func (t *turnLog) user(text string) {
-	t.emit(t.turn(events.RoleUser, text, time.Time{}))
+func (t *turnLog) user(text string, started, ended time.Time) {
+	turn := t.turn(events.RoleUser, text, started)
+	turn.Ended = ended
+	t.emit(turn)
 }
 
 // agent records what the agent said.

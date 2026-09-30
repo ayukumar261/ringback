@@ -19,7 +19,7 @@ func newTestTurnLog(room string) (*turnLog, *[]events.Turn) {
 func TestTurnLogNumbersRolesInOrder(t *testing.T) {
 	tl, turns := newTestTurnLog("call-a")
 	tl.agent("Hello!", time.Time{})
-	tl.user("Hi, I need help.")
+	tl.user("Hi, I need help.", time.Time{}, time.Time{})
 	tl.agent("Sure, with what?", time.Time{})
 
 	want := []events.Turn{
@@ -36,7 +36,7 @@ func TestTurnLogCorrectionReemitsNewestAgentSeq(t *testing.T) {
 	tl, turns := newTestTurnLog("call-a")
 	tl.agent("Let me read you the full terms and cond-", time.Time{})
 	tl.correct("Let me read")
-	tl.user("No thanks.")
+	tl.user("No thanks.", time.Time{}, time.Time{})
 
 	seqs := make([]int, 0, len(*turns))
 	for _, turn := range *turns {

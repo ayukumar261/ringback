@@ -2,9 +2,11 @@ package room
 
 import (
 	"bytes"
+	"encoding/binary"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +163,9 @@ func TestTapPressClampsLoudAgent(t *testing.T) {
 
 func TestTapNilIsInert(t *testing.T) {
 	var rec *tap
+	if got := rec.Speech(); got != nil {
+		t.Fatalf("nil tap speech = %v, want nil", got)
+	}
 	if got := rec.StartedAt(); !got.IsZero() {
 		t.Fatalf("nil tap started at %v, want zero", got)
 	}
@@ -205,6 +210,9 @@ func TestTapReportsRecordingClock(t *testing.T) {
 
 func TestRoomPassesThroughRecordingClock(t *testing.T) {
 	var off Room
+	if got := off.Speech(); got != nil {
+		t.Fatalf("room without recording speech = %v, want nil", got)
+	}
 	if got := off.StartedAt(); !got.IsZero() {
 		t.Fatalf("room without recording started at %v, want zero", got)
 	}
@@ -220,6 +228,137 @@ func TestRoomPassesThroughRecordingClock(t *testing.T) {
 	}
 	if got, want := rm.Recorded(), audio.FrameDuration; got != want {
 		t.Fatalf("room recorded %v, want %v", got, want)
+	}
+}
+
+func TestTapSpeechMatchesStereoWAV(t *testing.T) {
+	tone := toneFrame(lowHz)
+	loud := audio.Mix(tone, audio.Mix(tone, tone))
+	bursts := []audio.SpeechSegment{
+		{Started: 200 * time.Millisecond, Ended: 500 * time.Millisecond},
+		{Started: 800 * time.Millisecond, Ended: 900 * time.Millisecond},
+	}
+	for _, tt := range []struct {
+		name          string
+		caller, agent []byte
+		want          []audio.SpeechSegment
+	}{
+		{name: "caller bursts", caller: tone, want: bursts},
+		{name: "silence", agent: tone},
+		{name: "equal-level echo", caller: tone, agent: tone},
+		{name: "louder caller over agent", caller: loud, agent: tone, want: bursts},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, path := newTestTap(t, discard)
+			rm := Room{tap: rec}
+			for i := range 60 {
+				if (i >= 10 && i < 25) || (i >= 40 && i < 45) {
+					rec.offer(tt.caller)
+				}
+				rec.record(tt.agent)
+			}
+			if err := rec.close(); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(b) != 44+60*2*audio.FrameBytes || binary.LittleEndian.Uint16(b[22:24]) != 2 {
+				t.Fatal("expected 60 frames in a stereo WAV")
+			}
+			// Replay the saved channels through the pure detector, independently of
+			// offers and the tap's wall clock, to check against what reached the WAV.
+			detector := audio.NewSpeechDetector(nil)
+			for offset := 44; offset < len(b); offset += 2 * audio.FrameBytes {
+				left, right := deinterleave(b[offset : offset+2*audio.FrameBytes])
+				detector.Record(left, right)
+			}
+			if got := detector.Take(); !slices.Equal(got, tt.want) {
+				t.Fatalf("WAV speech = %v, want %v", got, tt.want)
+			}
+			if got := rm.Speech(); !slices.Equal(got, tt.want) {
+				t.Fatalf("room speech = %v, want WAV edges %v", got, tt.want)
+			}
+			if got := rm.Speech(); len(got) != 0 {
+				t.Fatalf("room returned consumed speech again: %v", got)
+			}
+		})
+	}
+}
+
+func TestTapSpeechUsesQueuedFramesWhenTheyAreWritten(t *testing.T) {
+	rec, path := newTestTap(t, discard)
+	for range 5 {
+		rec.record(nil)
+	}
+	for range 3 {
+		rec.offer(toneFrame(lowHz))
+	}
+	for range 3 {
+		rec.record(nil)
+	}
+	want := []audio.SpeechSegment{{Started: 100 * time.Millisecond, Ended: 160 * time.Millisecond}}
+	if got := rec.Speech(); !slices.Equal(got, want) {
+		t.Fatalf("queued speech = %v, want written positions %v", got, want)
+	}
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, _ := deinterleave(b[44:])
+	if !bytes.Equal(left[:5*audio.FrameBytes], make([]byte, 5*audio.FrameBytes)) {
+		t.Fatal("WAV unexpectedly contains caller speech before the queued frames were written")
+	}
+}
+
+func TestTapSpeechIgnoresFailedWritesAndSurvivesClose(t *testing.T) {
+	rec, _ := newTestTap(t, discard)
+	for range 3 {
+		rec.offer(toneFrame(lowHz))
+		rec.record(nil)
+	}
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		rec.offer(toneFrame(lowHz))
+		rec.record(nil)
+	}
+	want := []audio.SpeechSegment{{Started: 0, Ended: 60 * time.Millisecond}}
+	if got := rec.Speech(); !slices.Equal(got, want) {
+		t.Fatalf("speech after write failure = %v, want saved frames %v", got, want)
+	}
+}
+
+func TestTapSpeechAndRecordingShareLock(t *testing.T) {
+	rec, _ := newTestTap(t, discard)
+	defer rec.close()
+	tone := toneFrame(lowHz)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			rec.offer(tone)
+			rec.record(nil)
+		}
+	}()
+	var previous time.Duration
+	for {
+		for _, segment := range rec.Speech() {
+			if segment.Started < previous || segment.Ended < segment.Started || segment.Ended > rec.Recorded() {
+				t.Fatalf("invalid or overlapping speech segment: %+v after %v", segment, previous)
+			}
+			previous = segment.Ended
+		}
+		select {
+		case <-done:
+			return
+		default:
+		}
 	}
 }
 

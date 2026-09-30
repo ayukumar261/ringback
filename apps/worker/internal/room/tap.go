@@ -23,11 +23,12 @@ type tap struct {
 	stopped bool     // set after a write error so the call outlives the recording
 	started time.Time
 	frames  int64
+	speech  *audio.SpeechDetector
 }
 
 // newTap wraps a writer whose left channel is the caller and right channel the agent.
 func newTap(w *wav.Writer, log *slog.Logger) *tap {
-	return &tap{log: log, w: w}
+	return &tap{log: log, w: w, speech: audio.NewSpeechDetector(nil)}
 }
 
 // offer appends a caller frame to the queue, dropping the oldest once the cap is reached.
@@ -100,6 +101,7 @@ func (t *tap) record(agent []byte) {
 		t.started = time.Now()
 	}
 	t.frames++
+	t.speech.Record(caller, agent)
 }
 
 // StartedAt reports when the first frame was recorded, or zero before recording starts.
@@ -120,6 +122,17 @@ func (t *tap) Recorded() time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return time.Duration(t.frames) * audio.FrameDuration
+}
+
+// Speech consumes caller segments for one transcript, closing any open speech
+// at the current recording position under the same lock as the WAV writes.
+func (t *tap) Speech() []audio.SpeechSegment {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.speech.Take()
 }
 
 // close patches the wav header and closes the file.

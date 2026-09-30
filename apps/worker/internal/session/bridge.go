@@ -28,6 +28,7 @@ type roomHandle interface {
 	SendDTMF(digits string) error
 	StartedAt() time.Time
 	Recorded() time.Duration
+	Speech() []audio.SpeechSegment
 	Buffered() time.Duration
 	Done() <-chan struct{}
 	Err() error
@@ -131,7 +132,8 @@ func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLo
 		log.Info("caller barge-in", "event_id", e.EventID)
 	case agent.UserTurn:
 		playout.finish(time.Time{})
-		turns.user(e.Text)
+		started, ended := callerSpan(rm)
+		turns.user(e.Text, started, ended)
 		log.Info("user said", "text", e.Text)
 	case agent.AgentTurn:
 		playout.text(e)
