@@ -8,6 +8,8 @@ import { LiveKitClient } from "./clients/livekit.js";
 import { MongoClient } from "./clients/mongo.js";
 import { RedisClient } from "./clients/redis.js";
 import { router } from "./router.js";
+import { AudioConfig } from "./handlers/audio/config.js";
+import { CallsConfig } from "./handlers/calls/config.js";
 
 const ServerLive = NodeHttpServer.layerConfig(() => createServer(), {
   port: Config.integer("PORT").pipe(Config.withDefault(3001)),
@@ -36,6 +38,7 @@ const HttpLive = Layer.unwrapEffect(
 ).pipe(Layer.provide(ServerLive));
 
 const AppLive = Layer.mergeAll(HttpLive, MaterializerLive).pipe(
+  Layer.provide(Layer.mergeAll(AudioConfig.Default, CallsConfig.Default)),
   Layer.provide(
     Layer.mergeAll(
       RedisClient.Default,
