@@ -1,5 +1,81 @@
 import { Config, Effect } from "effect";
-import { MongoClient as MongoDriver } from "mongodb";
+import { MongoClient as MongoDriver, type Collection } from "mongodb";
+import type { Environment } from "../environment.js";
+
+// PurchaseDoc is one paid Checkout session with the customer's details at payment time.
+export interface PurchaseDoc {
+  _id: string;
+  requestId: string;
+  stripeAccountId: string;
+  livemode: boolean;
+  checkoutSessionId: string;
+  paymentIntentId: string;
+  customer: {
+    stripeId: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  amountTotal: number;
+  currency: string;
+  recordedAt: Date;
+}
+
+// createPurchaseIndexes records each session once and finds purchases by request or customer.
+export const createPurchaseIndexes = (purchases: Collection<PurchaseDoc>) =>
+  Promise.all([
+    purchases.createIndex(
+      { stripeAccountId: 1, livemode: 1, checkoutSessionId: 1 },
+      { unique: true },
+    ),
+    purchases.createIndex({ requestId: 1 }),
+    purchases.createIndex({
+      stripeAccountId: 1,
+      livemode: 1,
+      "customer.stripeId": 1,
+      recordedAt: -1,
+    }),
+  ]);
+
+// RequestDoc is one call an agent asked for, from checkout through dispatch.
+export interface RequestDoc {
+  _id: string;
+  inputHash: string;
+  requestSnapshotHash: string;
+  to: string;
+  prompt: string;
+  amount: number;
+  currency: string;
+  maxDuration: number;
+  policyVersion: string;
+  requireTerms: boolean;
+  environment: Environment;
+  createdAt: Date;
+  expiresAt: Date;
+  callUrl?: string;
+  status: "unpaid" | "paid" | "dialing" | "dialed" | "expired" | "failed";
+  room: string;
+  checkout?: { id: string; url: string; accountId: string; livemode: boolean };
+  purchaseId?: string;
+  paidAt?: Date;
+  claimedAt?: Date;
+  dialedAt?: Date;
+  // error says why dialing failed, which can happen after the call already went through.
+  error?: string;
+}
+
+// createRequestIndexes binds each Checkout session to one request and orders the dispatch queue.
+export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
+  Promise.all([
+    requests.createIndex(
+      { "checkout.accountId": 1, "checkout.livemode": 1, "checkout.id": 1 },
+      {
+        unique: true,
+        partialFilterExpression: { "checkout.id": { $type: "string" } },
+      },
+    ),
+    requests.createIndex({ status: 1, createdAt: 1 }),
+  ]);
 
 // CallDoc is one call, active until its call.ended lands.
 export interface CallDoc {
@@ -17,6 +93,13 @@ export interface CallDoc {
   audioStartedAt?: Date;
 }
 
+// createCallIndexes keeps one doc per room and sorts calls by start time.
+export const createCallIndexes = (calls: Collection<CallDoc>) =>
+  Promise.all([
+    calls.createIndex({ room: 1 }, { unique: true }),
+    calls.createIndex({ status: 1, startedAt: -1 }),
+  ]);
+
 // TurnDoc is one transcript turn, unique per (room, seq).
 export interface TurnDoc {
   room: string;
@@ -28,6 +111,10 @@ export interface TurnDoc {
   endedAt?: Date;
   durationMs?: number;
 }
+
+// createTurnIndexes keeps one turn per room and seq.
+export const createTurnIndexes = (turns: Collection<TurnDoc>) =>
+  turns.createIndex({ room: 1, seq: 1 }, { unique: true });
 
 // MetaDoc keys small pieces of consumer state by name.
 export interface MetaDoc {
@@ -51,14 +138,17 @@ export class MongoClient extends Effect.Service<MongoClient>()(
       const calls = db.collection<CallDoc>("calls");
       const turns = db.collection<TurnDoc>("turns");
       const meta = db.collection<MetaDoc>("meta");
+      const purchases = db.collection<PurchaseDoc>("purchases");
+      const requests = db.collection<RequestDoc>("requests");
       yield* Effect.tryPromise(() =>
         Promise.all([
-          calls.createIndex({ room: 1 }, { unique: true }),
-          calls.createIndex({ status: 1, startedAt: -1 }),
-          turns.createIndex({ room: 1, seq: 1 }, { unique: true }),
+          createCallIndexes(calls),
+          createTurnIndexes(turns),
+          createPurchaseIndexes(purchases),
+          createRequestIndexes(requests),
         ]),
       );
-      return { calls, turns, meta } as const;
+      return { calls, turns, meta, purchases, requests } as const;
     }),
   },
 ) {}

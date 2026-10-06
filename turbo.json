@@ -14,7 +14,8 @@
       "dependsOn": ["^check-types"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "env": ["MONGODB_URI"]
     },
     "dev": {
       "cache": false,
