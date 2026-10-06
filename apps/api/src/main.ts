@@ -8,6 +8,8 @@ import { LiveKitClient } from "./clients/livekit.js";
 import { MongoClient } from "./clients/mongo.js";
 import { RedisClient } from "./clients/redis.js";
 import { router } from "./router.js";
+import { StripeClient } from "./clients/stripe.js";
+import { PaymentConfig } from "./handlers/payments/config.js";
 import { AudioConfig } from "./handlers/audio/config.js";
 import { CallsConfig } from "./handlers/calls/config.js";
 
@@ -27,8 +29,8 @@ const HttpLive = Layer.unwrapEffect(
       HttpMiddleware.cors({
         allowedOrigins,
         allowedMethods: ["GET", "POST"],
-        // Last-Event-ID: EventSource sends it on resume; the rest let the dashboard place calls
-        allowedHeaders: ["Last-Event-ID", "Authorization", "Content-Type"],
+        // EventSource sends Last-Event-ID on resume, and browsers send the other two with POST /call
+        allowedHeaders: ["Last-Event-ID", "Content-Type", "Idempotency-Key"],
         maxAge: 3600,
       }),
       HttpServer.serve(HttpMiddleware.logger),
@@ -38,13 +40,20 @@ const HttpLive = Layer.unwrapEffect(
 ).pipe(Layer.provide(ServerLive));
 
 const AppLive = Layer.mergeAll(HttpLive, MaterializerLive).pipe(
-  Layer.provide(Layer.mergeAll(AudioConfig.Default, CallsConfig.Default)),
+  Layer.provide(
+    Layer.mergeAll(
+      PaymentConfig.Default,
+      AudioConfig.Default,
+      CallsConfig.Default,
+    ),
+  ),
   Layer.provide(
     Layer.mergeAll(
       RedisClient.Default,
       MongoClient.Default,
       LiveKitClient.Default,
       CallFeed.Default,
+      StripeClient.Default,
     ),
   ),
 );
