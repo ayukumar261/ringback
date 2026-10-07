@@ -3,6 +3,7 @@ import { audioSnapshot } from "./handlers/audio/http.js";
 import { callsFeed, callsSnapshot } from "./handlers/calls/http.js";
 import { turnsSnapshot } from "./handlers/turns/http.js";
 import { createCall, readCall } from "./handlers/payments/http.js";
+import { stripeWebhook } from "./webhooks/stripe.js";
 
 export const router = HttpRouter.empty.pipe(
   HttpRouter.get("/health", HttpServerResponse.json({ status: "ok" })),
@@ -12,4 +13,5 @@ export const router = HttpRouter.empty.pipe(
   HttpRouter.get("/calls/:room/audio", audioSnapshot),
   HttpRouter.post("/call", createCall),
   HttpRouter.get("/call/:id", readCall),
+  HttpRouter.post("/webhooks/stripe", stripeWebhook),
 );
