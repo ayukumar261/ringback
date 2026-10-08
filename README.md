@@ -9,16 +9,16 @@ Ringback gives your AI agent a phone line. Connect an ElevenLabs voice agent to 
 - **Host the calling stack yourself.** Docker Compose runs LiveKit, the LiveKit SIP service, Redis, MongoDB, the Go worker, the API, and the dashboard on your own Linux host. The media server, event stream, and database are part of the deployment.
 - **Bring your own carrier (BYOC).** Native SIP connects your carrier's phone network to LiveKit rooms. The included trunk configuration uses Twilio; adapt the SIP settings for your provider and numbers.
 - **Keep application storage on your infrastructure.** Call history and transcripts live in your MongoDB instance. WAV recordings live in a volume shared by the worker and API, ready for playback from the dashboard.
-- **Put an agent to work with one API request.** Send a destination and a prompt to `POST /calls`. Ringback dials the number, waits for an answer, starts the agent conversation, and streams its progress to the dashboard.
+- **Put an agent to work with one API request.** Send a destination and a prompt to `POST /call`, then pay through the returned Stripe Checkout URL. After payment is verified, Ringback dials the number, waits for an answer, starts the agent conversation, and streams its progress to the dashboard.
 
 ElevenLabs provides the hosted voice agent. Ringback runs the calling infrastructure, call orchestration, dashboard, and application storage on your host.
 
 ## Features
 
-- **Inbound and outbound calls.** Answer calls through a SIP trunk or start a call with `POST /calls`.
+- **Inbound and outbound calls.** Answer calls through a SIP trunk or purchase an outbound call with `POST /call`.
 - **Prompts per call.** Outbound requests set the agent's prompt; inbound calls use the agent's configured prompt.
 - **Phone menu navigation.** The agent can press keypad digits through the `send_dtmf` client tool.
-- **Live transcripts.** Follow caller, agent, and tool turns as they arrive, including transcript corrections.
+- **Live transcripts.** Follow user, agent, and tool turns as they arrive, including transcript corrections.
 - **Call history and playback.** Store call metadata and transcripts in MongoDB, with optional stereo WAV recordings.
 
 ## How it works
@@ -46,7 +46,7 @@ The worker starts a session when LiveKit creates a room whose name begins with `
 | Path                         | Purpose                                                                                  |
 | ---------------------------- | ---------------------------------------------------------------------------------------- |
 | [`apps/worker`](apps/worker) | Go worker: call sessions, audio, agent tools, recordings, and LiveKit webhooks           |
-| [`apps/api`](apps/api)       | TypeScript API built with Effect: call placement, history, transcripts, audio, and SSE   |
+| [`apps/api`](apps/api)       | TypeScript API built with Effect: paid calls, history, transcripts, audio, and SSE       |
 | [`apps/web`](apps/web)       | Next.js 16 / React 19 dashboard with SWR and Tailwind CSS                                |
 | [`packages`](packages)       | Shared ESLint and TypeScript configuration                                               |
 | [`deploy`](deploy)           | LiveKit and SIP configuration, deployment script, Caddy configuration, and host services |
@@ -59,7 +59,7 @@ The worker starts a session when LiveKit creates a room whose name begins with `
 - pnpm 9, pinned to `9.0.0` in `package.json`.
 - Docker with Docker Compose for Redis and MongoDB.
 - For the voice worker: Go 1.26, a C compiler, `pkg-config`, and the Opus / Opusfile development libraries. Caller speech timing uses Silero, ONNX Runtime, SpeexDSP, and WebRTC Audio Processing.
-- For real calls: a reachable LiveKit server and SIP service, a configured SIP provider, and an ElevenLabs API key and agent.
+- For real calls: a reachable LiveKit server and SIP service, a configured SIP provider, an ElevenLabs API key and agent, and a Stripe account for outbound calls.
 
 Install the worker's native dependencies:
 
@@ -96,14 +96,15 @@ REDIS_URL=redis://127.0.0.1:6379
 MONGODB_URI=mongodb://127.0.0.1:27017/ringback
 CORS_ORIGINS=http://localhost:3000
 
-# Add this to enable outbound call placement:
-# RINGBACK_API_KEY=replace-with-a-generated-secret
+# Add these to enable outbound calls:
+# STRIPE_SANDBOX_API_KEY=replace-with-your-sandbox-secret-key
+# STRIPE_SANDBOX_WEBHOOK_SECRET=replace-with-your-listener-signing-secret
 
 # Optional: an existing absolute directory shared by the API and worker.
 # AUDIO_DIR=/absolute/path/to/recordings
 ```
 
-Generate a call-placement secret with `openssl rand -hex 32`. The service-specific examples in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/worker/.env.example`](apps/worker/.env.example) are also available as references.
+The service-specific examples in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/worker/.env.example`](apps/worker/.env.example) are also available as references.
 
 The API and dashboard can run before you configure real LiveKit or ElevenLabs credentials. The dashboard will be empty until the worker publishes call events.
 
@@ -194,58 +195,90 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 
 ### Configuration reference
 
-| Variable                                    | Used by     | Default / behavior                                                                   |
-| ------------------------------------------- | ----------- | ------------------------------------------------------------------------------------ |
-| `LIVEKIT_URL`                               | Worker, API | Required WebSocket URL for the worker; API defaults to `http://127.0.0.1:7880`       |
-| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`     | Worker, API | Required for worker sessions and outbound dialing                                    |
-| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | Worker      | Required                                                                             |
-| `REDIS_URL`                                 | Worker, API | API defaults to `redis://127.0.0.1:6379`; worker publishes no events when unset      |
-| `MONGODB_URI`                               | API         | `mongodb://127.0.0.1:27017/ringback`                                                 |
-| `RINGBACK_API_KEY`                          | API         | Shared bearer token for `POST /calls`; omitting it disables call placement           |
-| `AUDIO_DIR`                                 | Worker, API | Unset disables recording and audio serving; both services must access the same files |
-| `WORKER_HTTP_ADDR`                          | Worker      | `127.0.0.1:8080`                                                                     |
-| `PORT`                                      | API         | `3001`                                                                               |
-| `CORS_ORIGINS`                              | API         | `http://localhost:3000`; accepts comma-separated origins                             |
-| `NEXT_PUBLIC_API_URL`                       | Dashboard   | `http://localhost:3001`; embedded in the browser bundle at build time                |
+| Variable                                                        | Used by     | Default / behavior                                                                                  |
+| --------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
+| `LIVEKIT_URL`                                                   | Worker, API | Required WebSocket URL for the worker; API defaults to `http://127.0.0.1:7880`                      |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`                         | Worker, API | Required for worker sessions and outbound dialing                                                   |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`                     | Worker      | Required                                                                                            |
+| `REDIS_URL`                                                     | Worker, API | API defaults to `redis://127.0.0.1:6379`; worker publishes no events when unset                     |
+| `MONGODB_URI`                                                   | API         | `mongodb://127.0.0.1:27017/ringback`                                                                |
+| `RINGBACK_CALLS_SNAPSHOT_LIMIT`                                 | API         | Maximum calls returned by `GET /calls`; defaults to `100`                                           |
+| `RINGBACK_CALLS_KEEPALIVE_MS`                                   | API         | SSE keepalive interval in milliseconds; defaults to `15000`                                         |
+| `RINGBACK_CALLS_RETRY_MS`                                       | API         | SSE reconnect delay in milliseconds; defaults to `3000`                                             |
+| `NODE_ENV`                                                      | API         | `development` uses Stripe Sandbox and `production` uses live Stripe; defaults to `development`      |
+| `STRIPE_SANDBOX_API_KEY`, `STRIPE_SANDBOX_WEBHOOK_SECRET`       | API         | Required for outbound calls in development                                                          |
+| `STRIPE_PRODUCTION_API_KEY`, `STRIPE_PRODUCTION_WEBHOOK_SECRET` | API         | Required for outbound calls in production                                                           |
+| `RINGBACK_CALL_PRICE_CENTS`, `RINGBACK_CALL_CURRENCY`           | API         | Price of one call; defaults to `50` and `usd`                                                       |
+| `RINGBACK_PUBLIC_API_URL`, `RINGBACK_PUBLIC_WEB_URL`            | API         | Public addresses used in call links; default to `http://localhost:3001` and `http://localhost:3000` |
+| `RINGBACK_REQUIRE_TERMS`                                        | API         | Require accepting your terms in Checkout; defaults to `false`                                       |
+| `AUDIO_DIR`                                                     | Worker, API | Unset disables recording and audio serving; both services must access the same files                |
+| `WORKER_HTTP_ADDR`                                              | Worker      | `127.0.0.1:8080`                                                                                    |
+| `PORT`                                                          | API         | `3001`                                                                                              |
+| `CORS_ORIGINS`                                                  | API         | `http://localhost:3000`; accepts comma-separated origins                                            |
+| `NEXT_PUBLIC_API_URL`                                           | Dashboard   | `http://localhost:3001`; embedded in the browser bundle at build time                               |
+
+The API checks its settings at startup and refuses to start when one is invalid.
 
 ## Using the API
 
 The local API base URL is `http://localhost:3001`. The checked-in Caddy configuration exposes these routes under `/api` in deployment.
 
-| Method | Route                | Description                                                                 |
-| ------ | -------------------- | --------------------------------------------------------------------------- |
-| `GET`  | `/health`            | API health response                                                         |
-| `GET`  | `/calls`             | Up to 100 calls, newest first                                               |
-| `GET`  | `/calls/events`      | SSE feed of `call.started`, `call.turn`, and `call.ended` events            |
-| `GET`  | `/calls/:room/turns` | Transcript ordered by turn sequence                                         |
-| `GET`  | `/calls/:room/audio` | WAV recording, with byte-range support for playback                         |
-| `POST` | `/calls`             | Start an outbound call; requires `Authorization: Bearer <RINGBACK_API_KEY>` |
+| Method | Route                | Description                                                      |
+| ------ | -------------------- | ---------------------------------------------------------------- |
+| `GET`  | `/health`            | API health response                                              |
+| `GET`  | `/calls`             | Newest calls first; configurable limit, default 100              |
+| `GET`  | `/calls/events`      | SSE feed of `call.started`, `call.turn`, and `call.ended` events |
+| `GET`  | `/calls/:room/turns` | Transcript ordered by turn sequence                              |
+| `GET`  | `/calls/:room/audio` | WAV recording, with byte-range support for playback              |
+| `POST` | `/call`              | Request an outbound call and get its Stripe Checkout link        |
+| `GET`  | `/call/:id`          | Payment and call status                                          |
+| `POST` | `/webhooks/stripe`   | Signed Stripe payment events                                     |
+
+Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `not_found`, `conflict`, `prompt_not_allowed`, `unavailable`, or `internal`.
 
 ### Place a call
 
-After configuring the outbound trunk, worker, and `RINGBACK_API_KEY`, run this from the repository root. Replace the example number with the intended recipient's number.
+Outbound calls are paid through Stripe Checkout, and they need the LiveKit, SIP, and worker setup above. In development the API uses your [Stripe Sandbox](https://docs.stripe.com/sandboxes) keys, so you can pay with the test card `4242 4242 4242 4242`. With `NODE_ENV=production` it takes live payments. Either way, a paid call is a real phone call.
+
+Add your Sandbox API key to `.env`, then forward Stripe's events to the API with the [Stripe CLI](https://docs.stripe.com/stripe-cli):
 
 ```sh
-set -a
-. ./.env
-set +a
+(
+  set -a
+  . ./.env
+  set +a
+  stripe listen --api-key "$STRIPE_SANDBOX_API_KEY" --forward-to http://localhost:3001/webhooks/stripe
+)
+```
 
-curl -X POST http://localhost:3001/calls \
-  -H "Authorization: Bearer $RINGBACK_API_KEY" \
+Copy the signing secret it prints into `STRIPE_SANDBOX_WEBHOOK_SECRET` and restart the API. Then request a call, replacing the example number with the intended recipient's number:
+
+```sh
+curl -X POST http://localhost:3001/call \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: confirm-appointment-1' \
   -d '{
     "to": "+15551234567",
     "prompt": "You are calling to confirm the appointment time. Keep the conversation brief."
   }'
 ```
 
-The destination must use E.164 format. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201` with a room identifier:
+The destination must use E.164 format. The prompt must contain 1–16,000 characters after trimming, and prompts asking for prank calls, harassment, impersonation, robocalls, or threats are refused. A successful request returns `201`:
 
 ```json
-{ "room": "call_+15551234567_a1b2c3d4e5f6" }
+{
+  "call_id": "3f9c…",
+  "status": "unpaid",
+  "checkout_url": "https://checkout.stripe.com/…",
+  "status_url": "http://localhost:3001/call/3f9c…",
+  "call_url": "http://localhost:3000/call/3f9c…",
+  "amount": 50,
+  "currency": "usd",
+  "max_duration_seconds": 1800
+}
 ```
 
-This confirms the call was initiated. The call appears in the dashboard once the participant answers and the agent conversation starts. The dashboard currently provides call inspection and playback; outbound calls are initiated through the API.
+Open `checkout_url` to pay. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and `status_url` moves from `unpaid` to `paid`, `dialing`, and `dialed`. A checkout nobody pays within 35 minutes ends in `expired`. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through. Retrying with the same `Idempotency-Key` returns the same call. Stripe sends the browser back to `call_url`, a dashboard page that is not built yet.
 
 ### Follow live events
 
@@ -255,7 +288,7 @@ curl -N http://localhost:3001/calls/events
 
 The feed supports `Last-Event-ID` to replay missed events still retained in Redis. Timestamps use Unix milliseconds. Transcript roles are `user`, `agent`, and `tool`; a repeated `(room, seq)` updates an existing turn.
 
-Only call placement requires the Ringback bearer token. Call history, transcripts, recordings, and the event feed currently have no application-level authentication; protect access at the network or reverse-proxy layer when deploying.
+Call history, transcripts, recordings, and the event feed have no application-level authentication, so protect them at the network or reverse-proxy layer when deploying. Only paid calls can dial out.
 
 ## Development commands
 
@@ -267,6 +300,12 @@ pnpm lint                     # Lint the TypeScript apps and shared packages
 pnpm --filter api check-types
 pnpm --filter web typecheck
 pnpm test                     # Run the API's Vitest suite
+```
+
+The API's MongoDB tests run when `MONGODB_URI` is set. They create and drop their own `ringback_test_*` databases:
+
+```sh
+MONGODB_URI=mongodb://127.0.0.1:27017 pnpm --filter api test
 ```
 
 Run worker checks separately:
@@ -300,13 +339,15 @@ To adapt this deployment, configure the root `.env`, image names, domain in [`de
 
 The deployed dashboard is built with `NEXT_PUBLIC_API_URL=/api`. Changing that value requires rebuilding the web image. Compose shares an `audio-data` volume between the worker and API and stores Redis and MongoDB data in named volumes.
 
+The API image runs with `NODE_ENV=production`, so it takes live payments. Add a Stripe webhook endpoint for `https://<your domain>/api/webhooks/stripe`, put its signing secret and your live key in `.env` as `STRIPE_PRODUCTION_WEBHOOK_SECRET` and `STRIPE_PRODUCTION_API_KEY`, and set `RINGBACK_PUBLIC_API_URL` and `RINGBACK_PUBLIC_WEB_URL` to your public addresses.
+
 ## Troubleshooting
 
 | Symptom                                     | Check                                                                                                                       |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Dashboard shows no calls                    | Confirm the worker has `REDIS_URL`, the API uses the same Redis instance, and a call has reached an agent conversation.     |
 | Worker exits with a missing-variable error  | Load `.env` into the process environment; the worker does not load it automatically.                                        |
-| Call placement returns `401` or `503`       | Check the bearer token, whether `RINGBACK_API_KEY` is set, and whether the `twilio-outbound` trunk exists.                  |
+| `POST /call` returns `503`                  | Check the Stripe keys for your `NODE_ENV`, and that LiveKit is reachable with the `twilio-outbound` trunk.                  |
 | ElevenLabs reports an audio format mismatch | Set both agent audio formats to `pcm_48000`.                                                                                |
 | Recordings are unavailable                  | Set `AUDIO_DIR` for both services, ensure the worker can write there and the API can read it, and wait for the call to end. |
 | Browser cannot reach the API                | Check `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS`; rebuild the dashboard after changing its production API URL.                |
