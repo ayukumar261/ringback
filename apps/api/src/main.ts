@@ -12,6 +12,7 @@ import { StripeClient } from "./clients/stripe.js";
 import { PaymentConfig } from "./handlers/payments/config.js";
 import { AudioConfig } from "./handlers/audio/config.js";
 import { CallsConfig } from "./handlers/calls/config.js";
+import { DispatchLive } from "./pipeline/dispatch.js";
 
 const ServerLive = NodeHttpServer.layerConfig(() => createServer(), {
   port: Config.integer("PORT").pipe(Config.withDefault(3001)),
@@ -39,7 +40,7 @@ const HttpLive = Layer.unwrapEffect(
   ),
 ).pipe(Layer.provide(ServerLive));
 
-const AppLive = Layer.mergeAll(HttpLive, MaterializerLive).pipe(
+const AppLive = Layer.mergeAll(HttpLive, MaterializerLive, DispatchLive).pipe(
   Layer.provide(
     Layer.mergeAll(
       PaymentConfig.Default,
