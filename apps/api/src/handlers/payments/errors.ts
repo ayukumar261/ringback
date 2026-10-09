@@ -6,6 +6,7 @@ import { LiveKitError } from "../../clients/livekit.js";
 export class PaymentError extends Data.TaggedError("PaymentError")<{
   code:
     | "invalid_request"
+    | "unauthorized"
     | "not_found"
     | "conflict"
     | "prompt_not_allowed"

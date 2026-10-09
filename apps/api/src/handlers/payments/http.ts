@@ -30,6 +30,7 @@ import {
 // statuses maps each payments error code to its HTTP status.
 const statuses = {
   invalid_request: 400,
+  unauthorized: 401,
   not_found: 404,
   conflict: 409,
   prompt_not_allowed: 422,
