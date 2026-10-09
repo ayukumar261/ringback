@@ -113,6 +113,33 @@ describe.skipIf(!mongoUri)("payment collection indexes", () => {
       mongo.purchases.insertOne(purchaseFixture({ _id: "another-id" })),
     ).rejects.toMatchObject({ code: 11000 });
   });
+  it("binds a retry key hash to one random request per environment", async () => {
+    await mongo.requests.insertOne(
+      requestFixture({
+        _id: "random-one",
+        retry: { keyHash: "same-key" },
+        checkout: undefined,
+      }),
+    );
+    await expect(
+      mongo.requests.insertOne(
+        requestFixture({
+          _id: "random-two",
+          retry: { keyHash: "same-key" },
+          checkout: undefined,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 11000 });
+    await mongo.requests.insertOne(
+      requestFixture({
+        _id: "production",
+        environment: "production",
+        retry: { keyHash: "same-key" },
+        checkout: undefined,
+      }),
+    );
+    expect(await mongo.requests.countDocuments()).toBe(2);
+  });
   it("creates indexes idempotently and includes the queue/customer lookup indexes", async () => {
     await createRequestIndexes(mongo.requests);
     await createPurchaseIndexes(mongo.purchases);

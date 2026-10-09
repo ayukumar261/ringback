@@ -52,6 +52,19 @@ export interface RequestDoc {
   environment: Environment;
   createdAt: Date;
   expiresAt: Date;
+  access?: {
+    tokenHash: string;
+    expiresAt: Date;
+    revokedAt?: Date;
+  };
+  retry?: {
+    // Separate from the random call ID; retained even after checkout/access expiry.
+    keyHash: string;
+    // The salt is public; recreating a token also requires the caller's recovery secret.
+    recovery?: { secretHash: string; salt: string };
+  };
+  dashboardUrl?: string;
+  // Legacy records keep their original, secret-free Stripe return URL.
   callUrl?: string;
   status: "unpaid" | "paid" | "dialing" | "dialed" | "expired" | "failed";
   room: string;
@@ -67,6 +80,13 @@ export interface RequestDoc {
 // createRequestIndexes binds each Checkout session to one request and orders the dispatch queue.
 export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
   Promise.all([
+    requests.createIndex(
+      { environment: 1, "retry.keyHash": 1 },
+      {
+        unique: true,
+        partialFilterExpression: { "retry.keyHash": { $type: "string" } },
+      },
+    ),
     requests.createIndex(
       { "checkout.accountId": 1, "checkout.livemode": 1, "checkout.id": 1 },
       {
