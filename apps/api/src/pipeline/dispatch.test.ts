@@ -32,7 +32,10 @@ import {
 } from "vitest";
 import { dispatchCall, DispatchLive } from "./dispatch.js";
 import { readCallRequest } from "../handlers/payments/http.js";
+import { newAccessToken, newCallAccess } from "../handlers/payments/access.js";
 import { handleStripeEvent } from "../webhooks/stripe.js";
+
+const accessToken = newAccessToken();
 
 const input = {
   to: "+15551234567",
@@ -53,6 +56,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     _id: "request-test",
     ...input,
     inputHash: hash(input),
+    access: newCallAccess(accessToken, new Date()),
     ...settings,
     maxDuration: MAX_DURATION,
     policyVersion: "prompt-rules-v1",
@@ -348,17 +352,17 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       ),
     );
     expect(await h.run(dispatchCall)).toBe(false);
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "dialed",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("dialed");
   });
   it("does not redial an uncertain provider failure after restarting the consumer", async () => {
     const { result } = await h.paid();
     h.dial.mockRejectedValueOnce(new Error("provider accepted before timeout"));
     await h.run(dispatchCall);
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "failed",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("failed");
     expect(await h.run(dispatchCall)).toBe(false);
     expect(h.dial).toHaveBeenCalledTimes(1);
   });
@@ -369,17 +373,17 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       { $set: { status: "dialing", claimedAt: new Date() } },
     );
     await h.run(dispatchCall);
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "dialing",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("dialing");
     await h.mongo.requests.updateOne(
       { _id: result.call_id },
       { $set: { claimedAt: new Date(Date.now() - 180_000) } },
     );
     await h.run(dispatchCall);
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "failed",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("failed");
     expect(h.dial).not.toHaveBeenCalled();
   });
   it("does not redial when dialing succeeds but saving the outcome fails", async () => {
@@ -389,9 +393,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       .mockRejectedValueOnce(new Error("write failed"));
     await h.run(dispatchCall);
     update.mockRestore();
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "failed",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("failed");
     expect(await h.run(dispatchCall)).toBe(false);
     expect(h.dial).toHaveBeenCalledTimes(1);
   });
@@ -405,9 +409,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     await h.mongo.requests.updateOne({ _id: result.call_id }, { $set: change });
     await h.run(dispatchCall);
     expect(h.dial).not.toHaveBeenCalled();
-    expect((await h.run(readCallRequest(result.call_id))).error).toBe(
-      "conflict",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).error,
+    ).toBe("conflict");
   });
   it.each([
     { stripeAccountId: "other" },
@@ -426,9 +430,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     const { result } = await h.paid({ environment: "development" });
     expect(await h.run(dispatchCall)).toBe(false);
     await h.run(dispatchCall, { environment: "development" });
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "dialed",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("dialed");
     expect(h.dial).toHaveBeenCalledTimes(1);
   });
   it("never dials a development request funded by a live payment", async () => {
@@ -440,9 +444,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     await h.mongo.purchases.updateOne({}, { $set: { livemode: true } });
     await h.run(dispatchCall, { environment: "development" });
     expect(h.dial).not.toHaveBeenCalled();
-    expect((await h.run(readCallRequest(result.call_id))).error).toBe(
-      "conflict",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).error,
+    ).toBe("conflict");
   });
   it("never dials a production request funded by a Sandbox payment", async () => {
     const { result } = await h.paid();
@@ -453,9 +457,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     await h.mongo.purchases.updateOne({}, { $set: { livemode: false } });
     await h.run(dispatchCall);
     expect(h.dial).not.toHaveBeenCalled();
-    expect((await h.run(readCallRequest(result.call_id))).error).toBe(
-      "conflict",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).error,
+    ).toBe("conflict");
   });
   it("does not recover stale production claims while running in development", async () => {
     const { result } = await h.paid();
@@ -469,9 +473,9 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       },
     );
     await h.run(dispatchCall, { environment: "development" });
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "dialing",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("dialing");
     expect(h.dial).not.toHaveBeenCalled();
   });
 });

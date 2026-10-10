@@ -27,6 +27,9 @@ import {
 } from "vitest";
 import { handleStripeEvent, stripeWebhook } from "./stripe.js";
 import { readCallRequest } from "../handlers/payments/http.js";
+import { newAccessToken, newCallAccess } from "../handlers/payments/access.js";
+
+const accessToken = newAccessToken();
 
 const route = HttpRouter.empty.pipe(
   HttpRouter.post("/webhooks/stripe", stripeWebhook),
@@ -51,6 +54,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     _id: "request-test",
     ...input,
     inputHash: hash(input),
+    access: newCallAccess(accessToken, new Date()),
     ...settings,
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
@@ -297,13 +301,15 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
         event({ ...session, status: "complete", payment_status: "paid" }),
       ),
     );
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "unpaid",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("unpaid");
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
     Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.run(handleStripeEvent(event(session)));
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe("paid");
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
   });
   it("deduplicates simultaneous webhooks and ignores a stale expiry notification", async () => {
@@ -315,7 +321,9 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     );
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
     await h.run(handleStripeEvent(event(session, "checkout.session.expired")));
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe("paid");
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
   });
   it.each([
     "amount_total",
@@ -343,9 +351,9 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     await expect(h.run(handleStripeEvent(original))).rejects.toThrow(
       "conflict",
     );
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "unpaid",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("unpaid");
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
   });
   it("rejects another Stripe account and a mutated request", async () => {
@@ -380,12 +388,14 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     const { result, session } = await h.checkout();
     session.status = "expired";
     await h.run(handleStripeEvent(event(session, "checkout.session.expired")));
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe(
-      "expired",
-    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("expired");
     Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.run(handleStripeEvent(event(session)));
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe("paid");
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
   });
   it("recovers after purchase persistence succeeds but queue persistence fails", async () => {
     const { result, session } = await h.checkout();
@@ -397,7 +407,9 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     update.mockRestore();
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
     await h.run(handleStripeEvent(event(session)));
-    expect((await h.run(readCallRequest(result.call_id))).status).toBe("paid");
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
   });
 });

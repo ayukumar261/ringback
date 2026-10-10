@@ -27,6 +27,7 @@ import {
   requestSnapshotHash,
 } from "./schema.js";
 import {
+  authorizeCallAccess,
   bearerToken,
   newAccessToken,
   newCallAccess,
@@ -381,13 +382,9 @@ export const recordPaidCheckout = (
   });
 
 // readCallRequest reads a call's payment and dispatch status.
-export const readCallRequest = (id: string) =>
+export const readCallRequest = (id: string, token: string | undefined) =>
   Effect.gen(function* () {
-    const mongo = yield* MongoClient;
-    const request = yield* Effect.tryPromise(() =>
-      mongo.requests.findOne({ _id: id }),
-    );
-    if (!request) return yield* new PaymentError({ code: "not_found" });
+    const request = yield* authorizeCallAccess(id, token);
     return {
       call_id: id,
       status: request.status,
@@ -401,6 +398,9 @@ export const readCall = paymentResponse(
   "status",
   Effect.gen(function* () {
     const { id = "" } = yield* HttpRouter.params;
-    return yield* json(yield* readCallRequest(id));
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const token = yield* bearerToken(request.headers.authorization);
+    if (!token) return yield* new PaymentError({ code: "unauthorized" });
+    return yield* json(yield* readCallRequest(id, token));
   }),
 );

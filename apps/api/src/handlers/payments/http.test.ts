@@ -1037,6 +1037,7 @@ describe("status", () => {
     status: "unpaid" as const,
     to: "+15551234567",
     prompt: "Private call details",
+    access: newCallAccess(accessToken, new Date()),
     ...changes,
   });
   const fakeMongo = () => ({
@@ -1056,15 +1057,67 @@ describe("status", () => {
     );
 
   describe("call status", () => {
+    it.each([undefined, "Basic password", "Bearer short"])(
+      "requires a bearer token before database access",
+      async (authorization) => {
+        const mongo = fakeMongo();
+        const response = await handler(mongo)(
+          new Request("http://localhost/call/request-test", {
+            headers: authorization ? { Authorization: authorization } : {},
+          }),
+        );
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: "unauthorized" });
+        expect(mongo.requests.findOne).not.toHaveBeenCalled();
+      },
+    );
+    it("does not accept tokens supplied in query strings", async () => {
+      const response = await handler()(
+        new Request(`http://localhost/call/request-test?token=${accessToken}`),
+      );
+      expect(response.status).toBe(401);
+    });
+    it.each([
+      { access: undefined },
+      { access: newCallAccess(newAccessToken(), new Date()) },
+      {
+        access: {
+          ...newCallAccess(accessToken, new Date()),
+          expiresAt: new Date(0),
+        },
+      },
+      {
+        access: {
+          ...newCallAccess(accessToken, new Date()),
+          revokedAt: new Date(),
+        },
+      },
+    ])(
+      "hides inaccessible calls without exposing their state",
+      async (changes) => {
+        const mongo = fakeMongo();
+        mongo.requests.findOne.mockResolvedValue(requestFixture(changes));
+        const response = await handler(mongo)(
+          new Request("http://localhost/call/request-test", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }),
+        );
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "not_found" });
+        expect(response.headers.get("cache-control")).toBe("no-store");
+      },
+    );
     it("returns 404 for unknown requests", async () => {
       const response = await handler()(
-        new Request("http://localhost/call/unknown"),
+        new Request("http://localhost/call/unknown", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
       );
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: "not_found" });
     });
     it.each([false, true])(
-      "exposes only public status fields (dialed: %s)",
+      "exposes only safe status fields to the authorized caller (dialed: %s)",
       async (dialed) => {
         const mongo = fakeMongo();
         const record = requestFixture(
@@ -1078,7 +1131,9 @@ describe("status", () => {
         );
         mongo.requests.findOne.mockResolvedValue(record);
         const response = await handler(mongo)(
-          new Request("http://localhost/call/request-test"),
+          new Request("http://localhost/call/request-test", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }),
         );
         expect(await response.json()).toEqual({
           call_id: record._id,
@@ -1098,7 +1153,9 @@ describe("status", () => {
         new Error("mongodb://private-password"),
       );
       const response = await handler(mongo)(
-        new Request("http://localhost/call/x"),
+        new Request("http://localhost/call/x", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
       );
       expect(response.status).toBe(500);
       expect(await response.json()).toEqual({ error: "internal" });
