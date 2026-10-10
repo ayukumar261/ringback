@@ -39,30 +39,34 @@ const replayAfter = (redis: Redis, lastId: string) =>
     return out;
   });
 
+// subscribeEvents attaches before reading history, closing the replay/live gap.
+export const subscribeEvents = (
+  redis: Redis,
+  feed: CallFeed,
+  lastEventId: string | undefined,
+) =>
+  Effect.gen(function* () {
+    // subscribe before replaying so nothing falls between XRANGE and the feed
+    const sub = yield* PubSub.subscribe(feed);
+    const since = eventCursor(lastEventId);
+    const replay = since === undefined ? [] : yield* replayAfter(redis, since);
+    // the feed buffers from before XRANGE ran, so drop what the replay already sent
+    const cutoff = replay.at(-1)?.id ?? since;
+    const live =
+      cutoff === undefined
+        ? Stream.fromQueue(sub)
+        : Stream.fromQueue(sub).pipe(
+            Stream.filter((e) => isAfter(e.id, cutoff)),
+          );
+    return Stream.fromIterable(replay).pipe(Stream.concat(live));
+  });
+
 // events replays anything past lastEventId, then follows the live feed.
 export const events = (
   redis: Redis,
   feed: CallFeed,
   lastEventId: string | undefined,
-) =>
-  Stream.unwrapScoped(
-    Effect.gen(function* () {
-      // subscribe before replaying so nothing falls between XRANGE and the feed
-      const sub = yield* PubSub.subscribe(feed);
-      const since = eventCursor(lastEventId);
-      const replay =
-        since === undefined ? [] : yield* replayAfter(redis, since);
-      // the feed buffers from before XRANGE ran, so drop what the replay already sent
-      const cutoff = replay.at(-1)?.id ?? since;
-      const live =
-        cutoff === undefined
-          ? Stream.fromQueue(sub)
-          : Stream.fromQueue(sub).pipe(
-              Stream.filter((e) => isAfter(e.id, cutoff)),
-            );
-      return Stream.fromIterable(replay).pipe(Stream.concat(live));
-    }),
-  );
+) => Stream.unwrapScoped(subscribeEvents(redis, feed, lastEventId));
 
 // listCalls reads the newest calls and encodes them for the wire.
 export const listCalls = (mongo: MongoClient) =>
