@@ -30,8 +30,14 @@ const HttpLive = Layer.unwrapEffect(
       HttpMiddleware.cors({
         allowedOrigins,
         allowedMethods: ["GET", "POST"],
-        // EventSource sends Last-Event-ID on resume, and browsers send the other two with POST /call
-        allowedHeaders: ["Last-Event-ID", "Content-Type", "Idempotency-Key"],
+        // Allow SSE replay, call access, and authenticated creation retries.
+        allowedHeaders: [
+          "Last-Event-ID",
+          "Content-Type",
+          "Idempotency-Key",
+          "Idempotency-Secret",
+          "Authorization",
+        ],
         maxAge: 3600,
       }),
       HttpServer.serve(HttpMiddleware.logger),

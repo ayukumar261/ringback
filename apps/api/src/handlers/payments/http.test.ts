@@ -5,7 +5,7 @@ import {
   HttpServerError,
   HttpServerRequest,
 } from "@effect/platform";
-import { Effect, Stream } from "effect";
+import { Effect, Logger, Stream } from "effect";
 import { MongoClient as Driver, type Collection } from "mongodb";
 import type Stripe from "stripe";
 import {
@@ -46,6 +46,15 @@ import {
   recordPaidCheckout,
 } from "./http.js";
 import { hash, MAX_DURATION, requestSnapshotHash } from "./schema.js";
+import {
+  newAccessToken,
+  newCallAccess,
+  secretHash,
+  ACCESS_TOKEN_TTL_MS,
+} from "./access.js";
+
+const accessToken = newAccessToken();
+const creationCredentials = { recoverySecret: newAccessToken() };
 
 const bodyHandler = HttpApp.toWebHandler(
   paymentResponse(
@@ -129,6 +138,7 @@ describe("payment HTTP boundary", () => {
   });
   it.each([
     [new PaymentError({ code: "invalid_request" }), 400, "invalid_request"],
+    [new PaymentError({ code: "unauthorized" }), 401, "unauthorized"],
     [new PaymentError({ code: "not_found" }), 404, "not_found"],
     [new PaymentError({ code: "conflict" }), 409, "conflict"],
     [
@@ -176,6 +186,7 @@ describe("checkout", () => {
       _id: "request-test",
       ...input,
       inputHash: hash(input),
+      access: newCallAccess(accessToken, new Date()),
       ...settings,
       maxDuration: MAX_DURATION,
       policyVersion: "prompt-rules-v1",
@@ -344,24 +355,49 @@ describe("checkout", () => {
       expect(await result.json()).toEqual({ error: "unavailable" });
       expect(h.createSession).not.toHaveBeenCalled();
     });
+    it.each([
+      { "Idempotency-Secret": newAccessToken() },
+      { "Idempotency-Key": "retry", "Idempotency-Secret": "short" },
+      { "Idempotency-Key": "retry", "Idempotency-Secret": "a".repeat(43) },
+    ] as Record<string, string>[])(
+      "rejects invalid recovery credentials before database/provider work",
+      async (headers) => {
+        const mongo = fakeMongo();
+        const h = harness(mongo);
+        const response = await h.http(route)(
+          request(JSON.stringify(input), headers),
+        );
+        expect(response.status).toBe(400);
+        expect(mongo.requests.findOne).not.toHaveBeenCalled();
+        expect(h.createSession).not.toHaveBeenCalled();
+      },
+    );
     it("passes Idempotency-Key and returns the original Checkout on retry", async () => {
       const mongo = fakeMongo();
       const record = requestFixture();
       mongo.requests.findOne.mockResolvedValue(record);
       const h = harness(mongo);
       const response = await h.http(route)(
-        request(JSON.stringify(input), { "Idempotency-Key": "retry" }),
+        request(JSON.stringify(input), {
+          "Idempotency-Key": "retry",
+          Authorization: `Bearer ${accessToken}`,
+        }),
       );
       expect(response.status).toBe(201);
       expect(await response.json()).toMatchObject({
         call_id: record._id,
         checkout_url: record.checkout!.url,
         status_url: `http://localhost:3001/call/${record._id}`,
-        call_url: `http://localhost:3000/call/${record._id}`,
+        dashboard_url: `http://localhost:3000/call/${record._id}#token=${accessToken}`,
+        access_token: accessToken,
         amount: 50,
       });
       expect(mongo.requests.findOne.mock.calls[0]![0]).toMatchObject({
-        _id: expect.stringMatching(/^[a-f0-9]{64}$/),
+        environment: "production",
+        $or: [
+          { "retry.keyHash": expect.stringMatching(/^[a-f0-9]{64}$/) },
+          { _id: expect.stringMatching(/^[a-f0-9]{64}$/) },
+        ],
       });
       expect(h.createSession).not.toHaveBeenCalled();
     });
@@ -406,7 +442,7 @@ describe("checkout", () => {
         request(
           JSON.stringify({
             ...input,
-            call_url: "https://untrusted.example",
+            dashboard_url: "https://untrusted.example",
             returnUrl: "https://untrusted.example",
           }),
         ),
@@ -416,12 +452,14 @@ describe("checkout", () => {
       expect(result).toMatchObject({
         checkout_url: `https://checkout.stripe.com/test/cs_${result.call_id}`,
         status_url: `https://api.example.com/api/call/${result.call_id}`,
-        call_url: `https://example.com/call/${result.call_id}`,
+        dashboard_url: `https://example.com/call/${result.call_id}#token=${result.access_token}`,
       });
-      expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(result.call_url);
+      expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(
+        `https://example.com/call/${result.call_id}`,
+      );
       expect(
-        (await h.mongo.requests.findOne({ _id: result.call_id }))?.callUrl,
-      ).toBe(result.call_url);
+        (await h.mongo.requests.findOne({ _id: result.call_id }))?.dashboardUrl,
+      ).toBe(`https://example.com/call/${result.call_id}`);
       expect(h.dial).not.toHaveBeenCalled();
       expect(await h.mongo.purchases.countDocuments()).toBe(0);
     });
@@ -432,6 +470,7 @@ describe("checkout", () => {
             createCallRequest(
               { ...input, amount: 1, max_duration_seconds: 9999 },
               "same",
+              creationCredentials,
             ),
           ),
         ),
@@ -444,13 +483,19 @@ describe("checkout", () => {
         max_duration_seconds: MAX_DURATION,
       });
       expect(
-        await h.run(createCallRequest(input, "same"), {
+        await h.run(createCallRequest(input, "same", creationCredentials), {
           amount: 100,
           publicWebUrl: "https://new.example",
         }),
       ).toEqual(results[0]);
       await expect(
-        h.run(createCallRequest({ ...input, prompt: "Another call" }, "same")),
+        h.run(
+          createCallRequest(
+            { ...input, prompt: "Another call" },
+            "same",
+            creationCredentials,
+          ),
+        ),
       ).rejects.toThrow("conflict");
       expect(await h.mongo.purchases.countDocuments()).toBe(0);
       expect(h.dial).not.toHaveBeenCalled();
@@ -462,33 +507,40 @@ describe("checkout", () => {
     });
     it("recovers a Stripe failure using the original return URL and quote", async () => {
       h.createSession.mockRejectedValueOnce(new Error("network"));
-      await expect(h.run(createCallRequest(input, "retry"))).rejects.toThrow(
-        "unavailable",
+      await expect(
+        h.run(createCallRequest(input, "retry", creationCredentials)),
+      ).rejects.toThrow("unavailable");
+      const result = await h.run(
+        createCallRequest(input, "retry", creationCredentials),
+        {
+          publicApiUrl: "https://new.example/api",
+          publicWebUrl: "https://new.example",
+          amount: 100,
+        },
       );
-      const result = await h.run(createCallRequest(input, "retry"), {
-        publicApiUrl: "https://new.example/api",
-        publicWebUrl: "https://new.example",
-        amount: 100,
-      });
       expect(result.status).toBe("unpaid");
       expect(h.createSession.mock.calls[1]![0]).toMatchObject({
         returnUrl: `http://localhost:3000/call/${result.call_id}`,
         amount: 50,
       });
-      expect(result.call_url).toBe(
-        `http://localhost:3000/call/${result.call_id}`,
+      expect(result.dashboard_url).toBe(
+        `http://localhost:3000/call/${result.call_id}#token=${result.access_token}`,
       );
       expect(await h.mongo.requests.countDocuments()).toBe(1);
     });
     it("recovers a crash between Stripe creation and the Mongo binding", async () => {
-      const result = await h.run(createCallRequest(input, "test-request"));
+      const result = await h.run(
+        createCallRequest(input, "test-request", creationCredentials),
+      );
       await h.mongo.requests.updateOne(
         { _id: result.call_id },
         { $unset: { checkout: "" } },
       );
-      expect(await h.run(createCallRequest(input, "test-request"))).toEqual(
-        result,
-      );
+      expect(
+        await h.run(
+          createCallRequest(input, "test-request", creationCredentials),
+        ),
+      ).toEqual(result);
       expect(h.sessions.size).toBe(1);
     });
     it("rejects mismatched Stripe pricing without binding the session", async () => {
@@ -500,9 +552,9 @@ describe("checkout", () => {
           amount_total: 1,
         }),
       }));
-      await expect(h.run(createCallRequest(input, "bad"))).rejects.toThrow(
-        "conflict",
-      );
+      await expect(
+        h.run(createCallRequest(input, "bad", creationCredentials)),
+      ).rejects.toThrow("conflict");
       expect((await h.mongo.requests.findOne({}))?.checkout).toBeUndefined();
     });
     it("uses Sandbox checkout in development and scopes retries by environment", async () => {
@@ -515,9 +567,12 @@ describe("checkout", () => {
           metadata: { request_snapshot_hash: r.requestSnapshotHash },
         }),
       }));
-      const development = await h.run(createCallRequest(input, "same"), {
-        environment: "development",
-      });
+      const development = await h.run(
+        createCallRequest(input, "same", creationCredentials),
+        {
+          environment: "development",
+        },
+      );
       expect(h.ready).toHaveBeenCalledTimes(1);
       expect(h.dial).not.toHaveBeenCalled();
       expect(
@@ -526,12 +581,14 @@ describe("checkout", () => {
         environment: "development",
         checkout: { livemode: false },
       });
-      const production = await h.run(createCallRequest(input, "same"));
+      const production = await h.run(
+        createCallRequest(input, "same", creationCredentials),
+      );
       expect(production.call_id).not.toBe(development.call_id);
       expect(await h.mongo.requests.countDocuments()).toBe(2);
       expect(h.ready).toHaveBeenCalledTimes(2);
       expect(
-        await h.run(createCallRequest(input, "same"), {
+        await h.run(createCallRequest(input, "same", creationCredentials), {
           environment: "development",
         }),
       ).toEqual(development);
@@ -556,15 +613,237 @@ describe("checkout", () => {
     );
     it("rejects stale incomplete checkouts without creating another session", async () => {
       h.createSession.mockRejectedValueOnce(new Error("network"));
-      await expect(h.run(createCallRequest(input, "stale"))).rejects.toThrow();
+      await expect(
+        h.run(createCallRequest(input, "stale", creationCredentials)),
+      ).rejects.toThrow();
       await h.mongo.requests.updateOne(
         {},
         { $set: { expiresAt: new Date(Date.now() + 29 * 60000) } },
       );
-      await expect(h.run(createCallRequest(input, "stale"))).rejects.toThrow(
-        "conflict",
+      await expect(
+        h.run(createCallRequest(input, "stale", creationCredentials)),
+      ).rejects.toThrow("conflict");
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+    });
+    it("keeps call IDs independent of caller keys and persists access without secrets", async () => {
+      const result = await h.run(
+        createCallRequest(input, "secret-key", creationCredentials),
+      );
+      expect(result.call_id).not.toBe(
+        hash(["call", settings.environment, "secret-key"]),
+      );
+      expect(result.call_id).toMatch(/^[a-f0-9-]{36}$/);
+      const stored = (await mongo.requests.findOne({ _id: result.call_id }))!;
+      expect(stored).toMatchObject({
+        access: {
+          tokenHash: secretHash(result.access_token),
+        },
+      });
+      expect(
+        stored.access!.expiresAt.getTime() - stored.createdAt.getTime(),
+      ).toBe(ACCESS_TOKEN_TTL_MS);
+      for (const secret of [
+        result.access_token,
+        creationCredentials.recoverySecret,
+        "secret-key",
+      ]) {
+        expect(JSON.stringify(stored)).not.toContain(secret);
+        expect(JSON.stringify(h.createSession.mock.calls)).not.toContain(
+          secret,
+        );
+      }
+      expect(result.dashboard_url).toBe(
+        `${stored.dashboardUrl}#token=${result.access_token}`,
+      );
+      expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(
+        stored.dashboardUrl,
+      );
+    });
+    it("does not disclose or replace credentials on key/body-only retries", async () => {
+      const result = await h.run(createCallRequest(input, "private"));
+      const stored = await mongo.requests.findOne({ _id: result.call_id });
+      for (const credentials of [
+        {},
+        { recoverySecret: newAccessToken() },
+        { accessToken: newAccessToken() },
+      ]) {
+        await expect(
+          h.run(createCallRequest(input, "private", credentials)),
+        ).rejects.toThrow("conflict");
+      }
+      expect(await mongo.requests.findOne({ _id: result.call_id })).toEqual(
+        stored,
       );
       expect(h.createSession).toHaveBeenCalledTimes(1);
+      expect(
+        await h.run(
+          createCallRequest(input, "private", {
+            accessToken: result.access_token,
+          }),
+        ),
+      ).toEqual(result);
+    });
+    it("safely handles a lost response without recovery credentials", async () => {
+      // Simulate a response discarded before the client learns either the ID or token.
+      await h.run(createCallRequest(input, "lost"));
+      const before = await mongo.requests.findOne({});
+      await expect(h.run(createCallRequest(input, "lost"))).rejects.toThrow(
+        "conflict",
+      );
+      expect(await mongo.requests.countDocuments()).toBe(1);
+      expect(await mongo.requests.findOne({})).toEqual(before);
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+    });
+    it("recovers a lost HTTP response using the original recovery secret", async () => {
+      const headers = {
+        "Idempotency-Key": "lost",
+        "Idempotency-Secret": creationCredentials.recoverySecret,
+      };
+      const first = await h.http(route)(
+        request(JSON.stringify(input), headers),
+      );
+      const lostResponse = await first.json();
+      const retry = await h.http(route)(
+        request(JSON.stringify(input), headers),
+      );
+      expect(retry.status).toBe(201);
+      expect(await retry.json()).toEqual(lostResponse);
+      expect(await mongo.requests.countDocuments()).toBe(1);
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+    });
+    it("accepts an authenticated HTTP retry without the recovery secret", async () => {
+      const first = await h.run(createCallRequest(input, "retry"));
+      const response = await h.http(route)(
+        request(JSON.stringify(input), {
+          "Idempotency-Key": "retry",
+          Authorization: `Bearer ${first.access_token}`,
+        }),
+      );
+      expect(await response.json()).toEqual(first);
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+    });
+    it("does not let a call token authorize another call or create a new request", async () => {
+      const first = await h.run(createCallRequest(input, "first"));
+      await h.run(createCallRequest(input, "second"));
+      for (const key of ["second", "new"]) {
+        await expect(
+          h.run(
+            createCallRequest(input, key, { accessToken: first.access_token }),
+          ),
+        ).rejects.toThrow("conflict");
+      }
+      expect(await mongo.requests.countDocuments()).toBe(2);
+      expect(h.createSession).toHaveBeenCalledTimes(2);
+    });
+    it("does not give concurrent clients with different secrets access to the winner", async () => {
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: 8 }, () =>
+          h.run(
+            createCallRequest(input, "race", {
+              recoverySecret: newAccessToken(),
+            }),
+          ),
+        ),
+      );
+      expect(
+        outcomes.filter((outcome) => outcome.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        outcomes.filter((outcome) => outcome.status === "rejected"),
+      ).toHaveLength(7);
+      expect(await mongo.requests.countDocuments()).toBe(1);
+      expect(h.sessions.size).toBe(1);
+    });
+    it.each([{ revokedAt: new Date() }, { expiresAt: new Date(0) }])(
+      "prevents bearer and recovery retries from restoring invalidated access %j",
+      async (change) => {
+        const result = await h.run(
+          createCallRequest(input, "revoked", creationCredentials),
+        );
+        const access = (await mongo.requests.findOne({ _id: result.call_id }))!
+          .access!;
+        await mongo.requests.updateOne(
+          { _id: result.call_id },
+          { $set: { access: { ...access, ...change } } },
+        );
+        for (const credentials of [
+          creationCredentials,
+          { accessToken: result.access_token },
+        ]) {
+          await expect(
+            h.run(createCallRequest(input, "revoked", credentials)),
+          ).rejects.toThrow("conflict");
+        }
+        expect(h.createSession).toHaveBeenCalledTimes(1);
+      },
+    );
+    it("rejects altered purchase terms on both replay and fresh Checkout binding", async () => {
+      const result = await h.run(
+        createCallRequest(input, "mutated", creationCredentials),
+      );
+      await mongo.requests.updateOne(
+        { _id: result.call_id },
+        { $set: { amount: 1 } },
+      );
+      await expect(
+        h.run(createCallRequest(input, "mutated", creationCredentials)),
+      ).rejects.toThrow("conflict");
+      await mongo.requests.updateOne(
+        { _id: result.call_id },
+        { $unset: { checkout: "" } },
+      );
+      await expect(
+        h.run(createCallRequest(input, "mutated", creationCredentials)),
+      ).rejects.toThrow("conflict");
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+    });
+    it("refuses legacy key-based recovery rather than minting access or duplicating Checkout", async () => {
+      const legacy = requestFixture({
+        _id: hash(["call", settings.environment, "legacy"]),
+        access: undefined,
+      });
+      delete legacy.access;
+      await mongo.requests.insertOne(legacy);
+      await expect(
+        h.run(createCallRequest(input, "legacy", creationCredentials)),
+      ).rejects.toThrow("conflict");
+      expect(await mongo.requests.countDocuments()).toBe(1);
+      expect(h.createSession).not.toHaveBeenCalled();
+      expect(
+        (await mongo.requests.findOne({ _id: legacy._id }))!.access,
+      ).toBeUndefined();
+    });
+    it("rejects prohibited prompts before storing a request or contacting providers", async () => {
+      await expect(
+        h.run(createCallRequest({ ...input, prompt: "Make a prank call" })),
+      ).rejects.toThrow("prompt_not_allowed");
+      expect(await mongo.requests.countDocuments()).toBe(0);
+      expect(h.ready).not.toHaveBeenCalled();
+      expect(h.createSession).not.toHaveBeenCalled();
+    });
+    it("keeps request, recovery, and access secrets out of failure logs", async () => {
+      const result = await h.run(
+        createCallRequest(input, "sensitive-key", creationCredentials),
+      );
+      const entries: unknown[] = [];
+      const logger = Logger.make((entry) => {
+        entries.push(entry);
+      });
+      await expect(
+        h.run(
+          createCallRequest(input, "sensitive-key", {
+            accessToken: newAccessToken(),
+          }).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger))),
+        ),
+      ).rejects.toThrow("conflict");
+      expect(entries.length).toBeGreaterThan(0);
+      const text = JSON.stringify(entries);
+      for (const secret of [
+        "sensitive-key",
+        result.access_token,
+        creationCredentials.recoverySecret,
+      ])
+        expect(text).not.toContain(secret);
     });
   });
 });

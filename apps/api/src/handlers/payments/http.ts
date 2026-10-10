@@ -26,6 +26,16 @@ import {
   POLICY_VERSION,
   requestSnapshotHash,
 } from "./schema.js";
+import {
+  bearerToken,
+  newAccessToken,
+  newCallAccess,
+  recoveredAccessToken,
+  retryAccessToken,
+  secretHash,
+  validAccessSecret,
+  type CreationCredentials,
+} from "./access.js";
 
 // statuses maps each payments error code to its HTTP status.
 const statuses = {
@@ -88,15 +98,21 @@ export const paymentResponse = <E, R>(
   );
 
 // callResponse is the POST /call body for a request with a Checkout session.
-const callResponse = (request: RequestDoc, settings: PaymentConfig) => {
-  if (!request.checkout)
+const callResponse = (
+  request: RequestDoc,
+  settings: PaymentConfig,
+  token: string,
+) => {
+  if (!request.checkout || !request.access)
     return Effect.fail(new PaymentError({ code: "unavailable" }));
   return Effect.succeed({
     call_id: request._id,
     status: request.status,
     checkout_url: request.checkout.url,
     status_url: `${settings.publicApiUrl}/call/${request._id}`,
-    call_url: request.callUrl ?? `${settings.publicWebUrl}/call/${request._id}`,
+    access_token: token,
+    access_expires_at: request.access.expiresAt.toISOString(),
+    dashboard_url: `${request.dashboardUrl ?? request.callUrl ?? `${settings.publicWebUrl}/call/${request._id}`}#token=${token}`,
     amount: request.amount,
     currency: request.currency,
     max_duration_seconds: request.maxDuration,
@@ -104,7 +120,11 @@ const callResponse = (request: RequestDoc, settings: PaymentConfig) => {
 };
 
 // createCallRequest saves the call an agent asked for and returns its Checkout link.
-export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
+export const createCallRequest = (
+  input: unknown,
+  idempotencyKey?: string,
+  credentials: CreationCredentials = {},
+) =>
   Effect.gen(function* () {
     const clean = yield* checkCallInput(input);
     if (
@@ -112,28 +132,48 @@ export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
       (!idempotencyKey.trim() || idempotencyKey.length > 255)
     )
       return yield* new PaymentError({ code: "invalid_request" });
+    if (
+      credentials.recoverySecret !== undefined &&
+      (!idempotencyKey || !validAccessSecret(credentials.recoverySecret))
+    )
+      return yield* new PaymentError({ code: "invalid_request" });
     const settings = yield* PaymentConfig;
     const environment = settings.environment;
     const mongo = yield* MongoClient;
     const stripe = yield* StripeClient;
     const dialer = yield* LiveKitClient;
-    const id = idempotencyKey
+    const keyHash = idempotencyKey
       ? hash(["call", environment, idempotencyKey])
-      : randomUUID();
+      : undefined;
+    const id = randomUUID();
     return yield* Effect.gen(function* () {
       const inputHash = hash(clean);
-      let record = yield* Effect.tryPromise(() =>
-        mongo.requests.findOne({ _id: id }),
-      );
-      if (
-        record &&
-        (record.inputHash !== inputHash || record.environment !== environment)
-      )
-        return yield* new PaymentError({ code: "conflict" });
-      if (record?.checkout) return yield* callResponse(record, settings);
+      // The legacy ID lookup prevents old keyed requests from creating a second checkout.
+      const findExisting = () =>
+        mongo.requests.findOne({
+          environment,
+          $or: [{ "retry.keyHash": keyHash }, { _id: keyHash }],
+        });
+      let record = keyHash ? yield* Effect.tryPromise(findExisting) : null;
+      let token: string | undefined;
+      if (record) {
+        token = retryAccessToken(record, credentials);
+      }
       if (!record) {
+        // A read token is never a credential to create a new call.
+        if (credentials.accessToken)
+          return yield* new PaymentError({ code: "conflict" });
         yield* dialer.ready;
         const now = new Date();
+        const recovery = credentials.recoverySecret
+          ? {
+              secretHash: secretHash(credentials.recoverySecret, "recovery"),
+              salt: newAccessToken(),
+            }
+          : undefined;
+        token = recovery
+          ? recoveredAccessToken(credentials.recoverySecret!, recovery.salt)
+          : newAccessToken();
         const snapshot = {
           ...clean,
           amount: settings.amount,
@@ -150,36 +190,44 @@ export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
           requestSnapshotHash: requestSnapshotHash(snapshot),
           createdAt: now,
           expiresAt: new Date(now.getTime() + 35 * 60_000),
+          access: newCallAccess(token, now),
+          ...(keyHash && { retry: { keyHash, ...(recovery && { recovery }) } }),
           status: "unpaid",
           room: `call_${id}`,
-          callUrl: `${settings.publicWebUrl}/call/${id}`,
+          dashboardUrl: `${settings.publicWebUrl}/call/${id}`,
         };
         yield* Effect.tryPromise({
           try: () => mongo.requests.insertOne(fresh),
           catch: (e) => e,
         }).pipe(
           Effect.catchAll((e) =>
-            (e as { code?: number })?.code === 11000
-              ? Effect.void
-              : Effect.fail(e),
+            Effect.gen(function* () {
+              if ((e as { code?: number })?.code !== 11000 || !keyHash)
+                return yield* Effect.fail(e);
+              // A concurrent request won. It must authorize this request's replay too.
+              record = yield* Effect.tryPromise(findExisting);
+              token = record
+                ? retryAccessToken(record, credentials)
+                : undefined;
+            }),
           ),
         );
-        record = yield* Effect.tryPromise(() =>
-          mongo.requests.findOne({ _id: id }),
-        );
+        if (!record) record = fresh;
       }
       if (
         !record ||
+        !token ||
         record.inputHash !== inputHash ||
         record.environment !== environment
       )
         return yield* new PaymentError({ code: "conflict" });
-      if (record.checkout) return yield* callResponse(record, settings);
-      // Stripe needs at least 30 minutes left on a new Checkout session
-      if (record.expiresAt.getTime() < Date.now() + 30 * 60_000)
-        return yield* new PaymentError({ code: "conflict" });
+      const requestId = record._id;
       const digest = record.requestSnapshotHash;
       if (!digest || requestSnapshotHash(record) !== digest)
+        return yield* new PaymentError({ code: "conflict" });
+      if (record.checkout) return yield* callResponse(record, settings, token);
+      // Stripe needs at least 30 minutes left on a new Checkout session
+      if (record.expiresAt.getTime() < Date.now() + 30 * 60_000)
         return yield* new PaymentError({ code: "conflict" });
       const { accountId, session } = yield* stripe.createSession({
         requestId: record._id,
@@ -188,7 +236,10 @@ export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
         currency: record.currency,
         maxDuration: record.maxDuration,
         expiresAt: record.expiresAt,
-        returnUrl: record.callUrl ?? `${settings.publicWebUrl}/call/${id}`,
+        returnUrl:
+          record.dashboardUrl ??
+          record.callUrl ??
+          `${settings.publicWebUrl}/call/${record._id}`,
         requireTerms: record.requireTerms,
       });
       if (
@@ -204,7 +255,7 @@ export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
         return yield* new PaymentError({ code: "conflict" });
       yield* Effect.tryPromise(() =>
         mongo.requests.updateOne(
-          { _id: id, checkout: { $exists: false } },
+          { _id: requestId, checkout: { $exists: false } },
           {
             $set: {
               checkout: {
@@ -218,16 +269,22 @@ export const createCallRequest = (input: unknown, idempotencyKey?: string) =>
         ),
       );
       const bound = yield* Effect.tryPromise(() =>
-        mongo.requests.findOne({ _id: id }),
+        mongo.requests.findOne({ _id: requestId }),
       );
       if (
         !bound?.checkout ||
+        bound.inputHash !== inputHash ||
+        bound.requestSnapshotHash !== digest ||
+        requestSnapshotHash(bound) !== digest ||
         bound.checkout.id !== session.id ||
         bound.checkout.accountId !== accountId ||
         bound.checkout.livemode !== session.livemode
       )
         return yield* new PaymentError({ code: "conflict" });
-      return yield* callResponse(bound, settings);
+      // Recheck revocation/expiry if access changed while Checkout was being created.
+      if (!retryAccessToken(bound, { accessToken: token }))
+        return yield* new PaymentError({ code: "conflict" });
+      return yield* callResponse(bound, settings, token);
     }).pipe(
       Effect.tapError((error) => logPaymentError("checkout", error)),
       Effect.annotateLogs({ requestId: id }),
@@ -239,13 +296,17 @@ export const createCall = paymentResponse(
   "checkout",
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    const accessToken = yield* bearerToken(request.headers.authorization);
     const body = yield* readBody(100_000);
     const input = yield* Effect.try({
       try: () => JSON.parse(body.toString("utf8")) as unknown,
       catch: () => new PaymentError({ code: "invalid_request" }),
     });
     return yield* json(
-      yield* createCallRequest(input, request.headers["idempotency-key"]),
+      yield* createCallRequest(input, request.headers["idempotency-key"], {
+        accessToken,
+        recoverySecret: request.headers["idempotency-secret"],
+      }),
       201,
     );
   }),
