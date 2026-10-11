@@ -7,8 +7,9 @@ import { Effect, Schedule, Stream } from "effect";
 import { MongoClient } from "../../clients/mongo.js";
 import { RedisClient } from "../../clients/redis.js";
 import { CallFeed, type FeedEvent } from "../../pipeline/feed.js";
+import type { CallEvent } from "../../events/index.js";
 import { audioFor } from "../audio/http.js";
-import { events, listCalls } from "./calls.js";
+import { events, listCalls, subscribeEvents } from "./calls.js";
 import { CallsConfig } from "./config.js";
 import { logCallsError } from "./errors.js";
 import {
@@ -178,5 +179,87 @@ export const callAudio = callResponse(
     const { record } = yield* httpCallAccess;
     const http = yield* HttpServerRequest.HttpServerRequest;
     return yield* audioFor(record.room, http.headers.range);
+  }),
+);
+
+// Provider identifiers and filesystem names are not part of the call feed.
+const safeEvent = (event: CallEvent) => {
+  if (event.event === "call.started")
+    return {
+      event: event.event,
+      room: event.room,
+      started_at: event.started_at,
+    };
+  if (event.event === "call.ended")
+    return {
+      event: event.event,
+      room: event.room,
+      ended_at: event.ended_at,
+      duration_ms: event.duration_ms,
+      audio_available: !!event.audio,
+      audio_started_at: event.audio_started_at,
+    };
+  return event;
+};
+
+// Split long grants into waits supported by the runtime's 32-bit timer.
+const untilExpiry = (expiresAt: number): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const remaining = expiresAt - Date.now();
+    return remaining <= 0
+      ? Effect.void
+      : Effect.sleep(Math.min(remaining, 86_400_000)).pipe(
+          Effect.zipRight(untilExpiry(expiresAt)),
+        );
+  });
+
+export const callEvents = callResponse(
+  Effect.gen(function* () {
+    const { record, token } = yield* httpCallAccess;
+    const http = yield* HttpServerRequest.HttpServerRequest;
+    const settings = yield* CallsConfig;
+    const redis = yield* RedisClient;
+    const feed = yield* CallFeed;
+    const mongo = yield* MongoClient;
+    const checkAccess = authorizeCallAccess(record._id, token).pipe(
+      Effect.provideService(MongoClient, mongo),
+    );
+    const keepalives = Stream.fromSchedule(
+      Schedule.spaced(Math.min(settings.keepaliveMs, 15000)),
+    ).pipe(
+      Stream.mapEffect(() => checkAccess),
+      Stream.map(() => ": ka\n\n"),
+    );
+    const body = Stream.unwrapScoped(
+      subscribeEvents(redis, feed, http.headers["last-event-id"]).pipe(
+        Effect.map((updates) =>
+          // A snapshot taken after ready cannot miss updates before subscription.
+          Stream.succeed(
+            `retry: ${settings.retryMs}\n\nevent: ready\ndata: {}\n\n`,
+          ).pipe(
+            Stream.concat(
+              updates.pipe(
+                Stream.filter(({ event }) => event.room === record.room),
+                Stream.tap(() => checkAccess),
+                Stream.map(
+                  ({ id, event }) =>
+                    `id: ${id}\nevent: ${event.event}\ndata: ${JSON.stringify(safeEvent(event))}\n\n`,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).pipe(
+      Stream.merge(keepalives),
+      Stream.interruptWhen(untilExpiry(record.access!.expiresAt.getTime())),
+      Stream.catchAll(() =>
+        Stream.succeed("event: access.unavailable\ndata: {}\n\n"),
+      ),
+    );
+    return HttpServerResponse.stream(Stream.encodeText(body), {
+      contentType: "text/event-stream",
+      headers: { "x-accel-buffering": "no" },
+    });
   }),
 );

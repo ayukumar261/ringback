@@ -7,6 +7,7 @@ import {
   callSnapshot,
   callTurns,
   callAudio,
+  callEvents,
 } from "./handlers/calls/http.js";
 import { turnsSnapshot } from "./handlers/turns/http.js";
 import { createCall } from "./handlers/payments/http.js";
@@ -23,5 +24,6 @@ export const router = HttpRouter.empty.pipe(
   HttpRouter.post("/call/:id/access", bootstrapCallAccess),
   HttpRouter.get("/call/:id/turns", callTurns),
   HttpRouter.get("/call/:id/audio", callAudio),
+  HttpRouter.get("/call/:id/events", callEvents),
   HttpRouter.post("/webhooks/stripe", stripeWebhook),
 );

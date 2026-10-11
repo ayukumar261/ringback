@@ -14,6 +14,7 @@ import {
   Effect,
   Fiber,
   Option,
+  PubSub,
   Stream,
   TestClock,
   TestContext,
@@ -195,7 +196,7 @@ const harness = async (keepaliveMs = 15000, retryMs = 3000) => {
 
 const bearer = (token = tokenA) => ({ Authorization: `Bearer ${token}` });
 const cookie = (token = tokenA) => ({ Cookie: `${CALL_COOKIE}=${token}` });
-const suffixes = ["", "/turns", "/audio"];
+const suffixes = ["", "/turns", "/audio", "/events"];
 
 describe("call authorization through the application router", () => {
   it.each(suffixes)(
@@ -388,6 +389,236 @@ describe("browser bootstrap", () => {
     );
     expect(response.status).toBe(404);
     expect(response.headers.get("set-cookie")).toBeNull();
+  });
+});
+
+const readUntil = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  marker: string,
+) => {
+  let text = "";
+  while (!text.includes(marker)) {
+    const next = await reader.read();
+    if (next.done) throw new Error("stream ended before expected event");
+    text += new TextDecoder().decode(next.value);
+  }
+  return text;
+};
+
+describe("call event streams", () => {
+  it("uses the configured retry delay and sends idle keepalives", async () => {
+    const h = await harness(20, 900);
+    const response = await h.request("/call/a/events", bearer());
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    const reader = response.body!.getReader();
+    try {
+      expect(await readUntil(reader, "event: ready")).toContain(
+        "retry: 900\n\n",
+      );
+      expect(await readUntil(reader, ": ka")).toContain(": ka\n\n");
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("ends with a generic event when replay fails", async () => {
+    const h = await harness();
+    h.xrange.mockRejectedValueOnce(new Error("private Redis credentials"));
+    const response = await h.request("/call/a/events", {
+      ...bearer(),
+      "Last-Event-ID": "1-0",
+    });
+    expect(await response.text()).toBe(
+      "event: access.unavailable\ndata: {}\n\n",
+    );
+  });
+
+  it("preserves lifecycle and transcript timing without exposing provider IDs or recording paths", async () => {
+    const h = await harness();
+    const response = await h.request("/call/a/events", bearer());
+    const reader = response.body!.getReader();
+    try {
+      await readUntil(reader, "event: ready");
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "1-0",
+          event: {
+            event: "call.started",
+            room: "room-a",
+            started_at: 1000,
+            conversation_id: "provider-private",
+          },
+        }),
+      );
+      const started = await readUntil(reader, "event: call.started");
+      expect(started).toContain('"started_at":1000');
+      expect(started).not.toContain("provider-private");
+      for (const role of ["agent", "tool"] as const) {
+        await Effect.runPromise(
+          PubSub.publish(h.feed, {
+            id: "2-0",
+            event: {
+              event: "call.turn",
+              room: "room-a",
+              seq: 1,
+              role,
+              text: "Hello",
+              at: 900,
+              started_at: 1000,
+              ended_at: 1400,
+              duration_ms: 400,
+            },
+          }),
+        );
+        const turn = await readUntil(reader, "event: call.turn");
+        expect(turn).toContain(`"role":"${role}"`);
+        expect(turn).toContain('"started_at":1000');
+        expect(turn).toContain('"ended_at":1400');
+        expect(turn).toContain('"duration_ms":400');
+      }
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "3-0",
+          event: {
+            event: "call.ended",
+            room: "room-a",
+            ended_at: 1500,
+            duration_ms: 1000,
+            audio: "a.wav",
+            audio_started_at: 0,
+          },
+        }),
+      );
+      const ended = await readUntil(reader, "event: call.ended");
+      expect(ended).toContain('"audio_started_at":0');
+      expect(ended).toContain('"audio_available":true');
+      expect(ended).toContain('"ended_at":1500');
+      expect(ended).toContain('"duration_ms":1000');
+      expect(ended).not.toContain("a.wav");
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("attaches the subscription before reporting ready to refresh snapshots", async () => {
+    const h = await harness();
+    const response = await h.request("/call/a/events", bearer());
+    const reader = response.body!.getReader();
+    try {
+      await readUntil(reader, "event: ready");
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "1-0",
+          event: {
+            event: "call.turn",
+            room: "room-a",
+            seq: 1,
+            role: "agent",
+            text: "First live turn",
+            at: 1000,
+          },
+        }),
+      );
+      expect(await readUntil(reader, "First live turn")).toContain(
+        "First live turn",
+      );
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("filters replay and live traffic, resumes, and stops before sending a revoked call's data", async () => {
+    const h = await harness();
+    const response = await h.request("/call/a/events", {
+      ...cookie(),
+      "Last-Event-ID": "1-0",
+    });
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const reader = response.body!.getReader();
+    try {
+      const replay = await readUntil(reader, "Hello A");
+      expect(replay).not.toContain("Secret B");
+      expect(h.xrange).toHaveBeenCalledWith("ringback:calls", "(1-0", "+");
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "4-0",
+          event: {
+            event: "call.turn",
+            room: "room-b",
+            seq: 2,
+            role: "agent",
+            text: "Private B live",
+            at: 2000,
+          },
+        }),
+      );
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "5-0",
+          event: {
+            event: "call.turn",
+            room: "room-a",
+            seq: 2,
+            role: "agent",
+            text: "Live A",
+            at: 2000,
+          },
+        }),
+      );
+      const live = await readUntil(reader, "Live A");
+      expect(live).not.toContain("Private B live");
+      h.records[0]!.access!.revokedAt = new Date();
+      await Effect.runPromise(
+        PubSub.publish(h.feed, {
+          id: "6-0",
+          event: {
+            event: "call.turn",
+            room: "room-a",
+            seq: 3,
+            role: "agent",
+            text: "After revocation",
+            at: 3000,
+          },
+        }),
+      );
+      expect(await readUntil(reader, "access.unavailable")).not.toContain(
+        "After revocation",
+      );
+      expect((await reader.read()).done).toBe(true);
+      expect((await h.request("/call/a/events", bearer())).status).toBe(404);
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("rechecks revocation while idle", async () => {
+    const h = await harness(20);
+    const response = await h.request("/call/a/events", bearer());
+    const reader = response.body!.getReader();
+    try {
+      await readUntil(reader, "retry:");
+      h.records[0]!.access!.revokedAt = new Date();
+      expect(await readUntil(reader, "access.unavailable")).toContain(
+        "access.unavailable",
+      );
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("closes an idle stream at access expiry", async () => {
+    const h = await harness();
+    h.records[0]!.access!.expiresAt = new Date(Date.now() + 100);
+    const response = await h.request("/call/a/events", bearer());
+    const reader = response.body!.getReader();
+    try {
+      await readUntil(reader, "retry:");
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      await reader.cancel();
+    }
   });
 });
 
