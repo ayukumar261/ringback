@@ -16,6 +16,7 @@ import {
   bearerToken,
   validAccessSecret,
 } from "../payments/access.js";
+import { PaymentConfig } from "../payments/config.js";
 import { PaymentError } from "../payments/errors.js";
 import { json, paymentResponse } from "../payments/http.js";
 import { listTurns } from "../turns/turns.js";
@@ -100,6 +101,30 @@ const callResponse = <E, R>(
   paymentResponse("call-access", effect).pipe(
     Effect.map(HttpServerResponse.setHeaders(callHeaders)),
   );
+
+// The browser always talks to /api on its own origin, including in development.
+export const bootstrapCallAccess = callResponse(
+  Effect.gen(function* () {
+    const http = yield* HttpServerRequest.HttpServerRequest;
+    const settings = yield* PaymentConfig;
+    if (http.headers.origin !== new URL(settings.publicWebUrl).origin)
+      return yield* new PaymentError({ code: "unauthorized" });
+    const token = yield* bearerToken(http.headers.authorization);
+    if (!token) return yield* new PaymentError({ code: "unauthorized" });
+    const { id = "" } = yield* HttpRouter.params;
+    const record = yield* authorizeCallAccess(id, token);
+    const response = yield* json({
+      access_expires_at: record.access!.expiresAt.toISOString(),
+    });
+    return yield* HttpServerResponse.setCookie(response, CALL_COOKIE, token, {
+      path: callCookiePath(id),
+      httpOnly: true,
+      secure: settings.environment === "production",
+      sameSite: "lax",
+      expires: record.access!.expiresAt,
+    });
+  }),
+);
 
 // Only explicitly selected call-facing fields can leave this boundary.
 export const callSnapshot = callResponse(

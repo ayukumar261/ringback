@@ -3,6 +3,7 @@ import { audioSnapshot } from "./handlers/audio/http.js";
 import {
   callsFeed,
   callsSnapshot,
+  bootstrapCallAccess,
   callSnapshot,
   callTurns,
   callAudio,
@@ -19,6 +20,7 @@ export const router = HttpRouter.empty.pipe(
   HttpRouter.get("/calls/:room/audio", audioSnapshot),
   HttpRouter.post("/call", createCall),
   HttpRouter.get("/call/:id", callSnapshot),
+  HttpRouter.post("/call/:id/access", bootstrapCallAccess),
   HttpRouter.get("/call/:id/turns", callTurns),
   HttpRouter.get("/call/:id/audio", callAudio),
   HttpRouter.post("/webhooks/stripe", stripeWebhook),

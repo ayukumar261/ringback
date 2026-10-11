@@ -35,7 +35,13 @@ import { AudioConfig } from "../audio/config.js";
 import { CallsConfig } from "./config.js";
 import { PaymentConfig } from "../payments/config.js";
 import { newAccessToken, newCallAccess } from "../payments/access.js";
-import { CALL_COOKIE, callsFeed, callsSnapshot, frame } from "./http.js";
+import {
+  CALL_COOKIE,
+  callCookiePath,
+  callsFeed,
+  callsSnapshot,
+  frame,
+} from "./http.js";
 
 const tokenA = newAccessToken();
 const tokenB = newAccessToken();
@@ -323,6 +329,65 @@ describe("call authorization through the application router", () => {
     ).toBe(416);
     h.calls[0]!.audio = "missing.wav";
     expect((await h.request("/call/a/audio", bearer())).status).toBe(404);
+  });
+});
+
+describe("browser bootstrap", () => {
+  it("sets a secure HttpOnly cookie scoped to the call without returning the secret", async () => {
+    const h = await harness();
+    const response = await h.request(
+      "/call/a/access",
+      { ...bearer(), Origin: settings.publicWebUrl },
+      "POST",
+    );
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get("set-cookie")!;
+    expect(setCookie).toContain(`Path=${callCookiePath("a")}`);
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).toContain("Expires=");
+    expect(setCookie).not.toContain("Domain=");
+    expect(await response.json()).toEqual({
+      access_expires_at: h.records[0]!.access!.expiresAt.toISOString(),
+    });
+    expect(
+      (await h.request("/call/a", { Cookie: setCookie.split(";")[0]! })).status,
+    ).toBe(200);
+  });
+
+  it.each([undefined, "https://untrusted.test", "null"])(
+    "rejects an untrusted or absent browser origin: %s",
+    async (origin) => {
+      const h = await harness();
+      const response = await h.request(
+        "/call/a/access",
+        { ...bearer(), ...(origin && { Origin: origin }) },
+        "POST",
+      );
+      expect(response.status).toBe(401);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    },
+  );
+
+  it("requires the original token even when a cookie exists and rejects another call", async () => {
+    const h = await harness();
+    expect(
+      (
+        await h.request(
+          "/call/a/access",
+          { ...cookie(), Origin: settings.publicWebUrl },
+          "POST",
+        )
+      ).status,
+    ).toBe(401);
+    const response = await h.request(
+      "/call/a/access",
+      { ...bearer(tokenB), Origin: settings.publicWebUrl },
+      "POST",
+    );
+    expect(response.status).toBe(404);
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 });
 
