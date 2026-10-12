@@ -12,7 +12,10 @@ export class ApiError extends Error {
 
 // fetcher resolves SWR keys (api paths) against the api origin.
 export async function fetcher<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`)
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+  })
   if (!res.ok) throw new ApiError(res.status, path)
   return (await res.json()) as T
 }
