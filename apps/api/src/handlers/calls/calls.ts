@@ -6,10 +6,8 @@ import {
   entryFields,
 } from "../../events/index.js";
 import { CallFeed, type FeedEvent } from "../../pipeline/feed.js";
-import type { MongoClient } from "../../clients/mongo.js";
-import { CallsConfig } from "./config.js";
 import { CallsError } from "./errors.js";
-import { encodeCallSnapshots, eventCursor } from "./schema.js";
+import { eventCursor } from "./schema.js";
 
 // isAfter reports whether stream entry id a is newer than b.
 export const isAfter = (a: string, b: string): boolean => {
@@ -67,26 +65,3 @@ export const events = (
   feed: CallFeed,
   lastEventId: string | undefined,
 ) => Stream.unwrapScoped(subscribeEvents(redis, feed, lastEventId));
-
-// listCalls reads the newest calls and encodes them for the wire.
-export const listCalls = (mongo: MongoClient) =>
-  Effect.gen(function* () {
-    const settings = yield* CallsConfig;
-    const docs = yield* Effect.tryPromise({
-      try: () =>
-        mongo.calls
-          .find(
-            {},
-            {
-              projection: { _id: 0 },
-              sort: { startedAt: -1 },
-              limit: settings.snapshotLimit,
-            },
-          )
-          .toArray(),
-      catch: () => new CallsError({ code: "internal" }),
-    });
-    return yield* encodeCallSnapshots(docs).pipe(
-      Effect.mapError(() => new CallsError({ code: "internal" })),
-    );
-  });
