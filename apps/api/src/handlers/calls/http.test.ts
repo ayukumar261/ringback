@@ -534,7 +534,9 @@ describe("call event streams", () => {
       "Last-Event-ID": "1-0",
     });
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe(
+      "no-store, no-transform",
+    );
     const reader = response.body!.getReader();
     try {
       const replay = await readUntil(reader, "Hello A");

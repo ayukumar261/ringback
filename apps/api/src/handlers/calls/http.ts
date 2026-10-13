@@ -262,4 +262,9 @@ export const callEvents = callResponse(
       headers: { "x-accel-buffering": "no" },
     });
   }),
+).pipe(
+  // Next's proxy otherwise compresses and buffers small live frames.
+  Effect.map(
+    HttpServerResponse.setHeader("cache-control", "no-store, no-transform"),
+  ),
 );
