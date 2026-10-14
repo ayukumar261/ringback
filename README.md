@@ -137,11 +137,10 @@ Run each command block in a separate terminal, starting from the repository root
 pnpm --filter web dev
 ```
 
-Open [localhost:3000](http://localhost:3000). The dashboard defaults to the API at `http://localhost:3001`. To change that address, set `NEXT_PUBLIC_API_URL` in `apps/web/.env.local`.
+Open the `dashboard_url` returned when creating a call. The home page at [localhost:3000](http://localhost:3000) explains private access and exposes no call history. Browser requests use `/api` on the same origin; Next.js proxies them to `http://127.0.0.1:3001` locally. Set `RINGBACK_API_UPSTREAM` in `apps/web/.env.local` to change the upstream, and set the API's `RINGBACK_PUBLIC_WEB_URL` to the exact browser origin if using a different host or port.
 
 ```sh
 curl http://localhost:3001/health
-curl http://localhost:3001/calls
 ```
 
 ### 5. Connect the voice worker
@@ -202,7 +201,6 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`                     | Worker      | Required                                                                                            |
 | `REDIS_URL`                                                     | Worker, API | API defaults to `redis://127.0.0.1:6379`; worker publishes no events when unset                     |
 | `MONGODB_URI`                                                   | API         | `mongodb://127.0.0.1:27017/ringback`                                                                |
-| `RINGBACK_CALLS_SNAPSHOT_LIMIT`                                 | API         | Maximum calls returned by `GET /calls`; defaults to `100`                                           |
 | `RINGBACK_CALLS_KEEPALIVE_MS`                                   | API         | SSE keepalive interval in milliseconds; defaults to `15000`                                         |
 | `RINGBACK_CALLS_RETRY_MS`                                       | API         | SSE reconnect delay in milliseconds; defaults to `3000`                                             |
 | `NODE_ENV`                                                      | API         | `development` uses Stripe Sandbox and `production` uses live Stripe; defaults to `development`      |
@@ -215,7 +213,7 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 | `WORKER_HTTP_ADDR`                                              | Worker      | `127.0.0.1:8080`                                                                                    |
 | `PORT`                                                          | API         | `3001`                                                                                              |
 | `CORS_ORIGINS`                                                  | API         | `http://localhost:3000`; accepts comma-separated origins                                            |
-| `NEXT_PUBLIC_API_URL`                                           | Dashboard   | `http://localhost:3001`; embedded in the browser bundle at build time                               |
+| `RINGBACK_API_UPSTREAM`                                         | Dashboard   | Local `/api` proxy target; defaults to `http://127.0.0.1:3001`; resolved during development/build |
 
 The API checks its settings at startup and refuses to start when one is invalid.
 
@@ -226,15 +224,15 @@ The local API base URL is `http://localhost:3001`. The checked-in Caddy configur
 | Method | Route                | Description                                                      |
 | ------ | -------------------- | ---------------------------------------------------------------- |
 | `GET`  | `/health`            | API health response                                              |
-| `GET`  | `/calls`             | Newest calls first; configurable limit, default 100              |
-| `GET`  | `/calls/events`      | SSE feed of `call.started`, `call.turn`, and `call.ended` events |
-| `GET`  | `/calls/:room/turns` | Transcript ordered by turn sequence                              |
-| `GET`  | `/calls/:room/audio` | WAV recording, with byte-range support for playback              |
 | `POST` | `/call`              | Request an outbound call and get its Stripe Checkout link        |
-| `GET`  | `/call/:id`          | Payment and call status                                          |
+| `GET`  | `/call/:id`          | Authorized task, payment/dispatch state, call metadata, and access expiry |
+| `POST` | `/call/:id/access`   | Browser bootstrap: bearer token and trusted Origin establish an HttpOnly cookie |
+| `GET`  | `/call/:id/turns`    | Authorized transcript ordered by turn sequence |
+| `GET`  | `/call/:id/audio`    | Authorized WAV recording, including byte-range playback |
+| `GET`  | `/call/:id/events`   | Authorized live and replayed events for this call |
 | `POST` | `/webhooks/stripe`   | Signed Stripe payment events                                     |
 
-Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `not_found`, `conflict`, `prompt_not_allowed`, `unavailable`, or `internal`.
+Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `unauthorized`, `not_found`, `conflict`, `prompt_not_allowed`, `unavailable`, or `internal`.
 
 ### Place a call
 
@@ -270,25 +268,63 @@ The destination must use E.164 format. The prompt must contain 1–16,000 charac
   "call_id": "3f9c…",
   "status": "unpaid",
   "checkout_url": "https://checkout.stripe.com/…",
+  "access_token": "<43-character base64url secret>",
+  "access_expires_at": "2026-11-08T12:00:00.000Z",
   "status_url": "http://localhost:3001/call/3f9c…",
-  "call_url": "http://localhost:3000/call/3f9c…",
+  "dashboard_url": "http://localhost:3000/call/3f9c…#token=<access_token>",
   "amount": 50,
   "currency": "usd",
   "max_duration_seconds": 1800
 }
 ```
 
-Open `checkout_url` to pay. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and `status_url` moves from `unpaid` to `paid`, `dialing`, and `dialed`. A checkout nobody pays within 35 minutes ends in `expired`. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through. Retrying with the same `Idempotency-Key` returns the same call. Stripe sends the browser back to `call_url`, a dashboard page that is not built yet.
+Open `checkout_url` to pay. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and the call status moves from `unpaid` to `paid`, `dialing`, and `dialed`. A checkout nobody pays within 35 minutes ends in `expired`. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through.
+
+Save the access token and use it to read `status_url`:
+
+```sh
+curl http://localhost:3001/call/<call_id> \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+One token grants read access to all results for its call: status, metadata, transcript, recording, and live events. Its hash, expiry, and revocation state are stored with the request; the raw token is never stored server-side. Access lasts 30 days from creation, independently of Checkout's expiry. Missing or malformed bearer credentials return `401`; an unknown call, incorrect token, expired token, or revoked token returns `404`. Calls created before this access model have no token and cannot be read through `GET /call/:id`.
+
+`dashboard_url` opens the private page at `/call/:id`. The browser removes the token fragment from the address bar and submits the token in an Authorization header to `POST /api/call/:id/access`. The API verifies the token and browser Origin, then sets an HttpOnly, SameSite=Lax cookie scoped to `/api/call/:id`, with Secure enabled in production. Cookies expire with the original grant; every read still checks its expiry and revocation. The browser never puts the token in localStorage or query strings.
+
+Open the private dashboard first and use its **Continue to payment** link so browser access is established before Checkout. Stripe returns to the secret-free call URL, where the cookie restores access. If payment was opened directly, or a different browser is used, reopen the original private link. Without valid access, the page shows a generic locked/unavailable message and no call details.
+
+The dashboard shows the task, payment/dispatch progress, live transcript, and recording playback with transcript seeking. The API keeps dispatch `status` separate from the nested `call.status` (`active` or `ended`); `dialed` does not imply completion. Billing/contact snapshots and provider identifiers stay server-side. Private data uses `Cache-Control: no-store`, with noindex and no-referrer protections on private pages. Expiry or revocation stops later reads; open feeds recheck access before each event and during idle keepalives, at most 15 seconds apart. Recordings and transcripts retain the existing deployment's storage lifecycle; token expiry does not delete them.
+
+The old `/calls`, `/calls/events`, and room-based transcript/audio routes return `404`, including when a call token is supplied. Global history and operational access are not exposed by these public routes. Pages live under `apps/web/app/(app)`; future documentation can use a sibling route group with its own layout.
+
+### Creation retries and lost responses
+
+Call IDs are random and independent of `Idempotency-Key`. Keyed requests store an optional `retry` object containing `keyHash` and, when a recovery secret is supplied, `recovery`. Requests without an idempotency key have no `retry` object. Retrying an existing keyed request requires the original body and either its bearer access token or the original `Idempotency-Secret`. A key or matching body alone returns `409` and never reveals or changes credentials. Authorized retries preserve the request, approved quote, token, and Checkout Session, including under concurrent requests. An access token cannot authorize creation of another call.
+
+For recovery when the first response is lost, generate and save a separate 32-byte random recovery secret before sending the request. Encode it as unpadded base64url (43 characters), and send it alongside the key:
+
+```sh
+curl -X POST http://localhost:3001/call \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: confirm-appointment-1' \
+  -H 'Idempotency-Secret: <saved-43-character-random-secret>' \
+  -d '{"to":"+15551234567","prompt":"Confirm the appointment time."}'
+```
+
+Retry with the same key, secret, and body after a network failure. The server uses HMAC-SHA256 over a fresh 32-byte salt to derive the call token from that secret. Only a recovery-secret hash and public salt are stored, so an authorized retry can reconstruct the same token without persisting it. The recovery secret authorizes creation retries only and cannot be used for call reads; it is specific to this request and introduces no account or persistent API key. Keep both secrets out of logs and analytics. Expiry or revocation invalidates recovery as well as bearer access.
+
+Without a recovery secret supplied on the initial request, a lost response or lost token cannot be recovered with the key alone. Keep the same key when checking an uncertain outcome; do not automatically switch keys, which would create another call request. A retry cannot add a recovery secret to an existing request. Legacy keyed requests likewise return `409` rather than gaining newly minted access or creating another Checkout Session.
 
 ### Follow live events
 
 ```sh
-curl -N http://localhost:3001/calls/events
+curl -N http://localhost:3001/call/<call_id>/events \
+  -H 'Authorization: Bearer <access_token>'
 ```
 
-The feed supports `Last-Event-ID` to replay missed events still retained in Redis. Timestamps use Unix milliseconds. Transcript roles are `user`, `agent`, and `tool`; a repeated `(room, seq)` updates an existing turn.
+The feed supports `Last-Event-ID` to replay missed events still retained in Redis. Both replay and live updates include only the authorized call. A `ready` event indicates that the live subscription is attached; clients should refresh snapshots then, including after reconnects, to reconcile events missed before subscription or no longer retained in Redis. Timestamps use Unix milliseconds. Transcript roles are `user`, `agent`, and `tool`; a repeated `(room, seq)` updates an existing turn. The private `call.ended` event reports `audio_available` instead of a filesystem name. An `access.unavailable` event ends the feed when the server can no longer authorize access.
 
-Call history, transcripts, recordings, and the event feed have no application-level authentication, so protect them at the network or reverse-proxy layer when deploying. Only paid calls can dial out.
+Only verified payment can make a request eligible to dial. The read token grants access to one call's results and does not grant operational controls.
 
 ## Development commands
 
@@ -300,6 +336,8 @@ pnpm lint                     # Lint the TypeScript apps and shared packages
 pnpm --filter api check-types
 pnpm --filter web typecheck
 pnpm test                     # Run the API's Vitest suite
+pnpm --filter web exec playwright install chromium
+pnpm --filter web test:e2e     # Browser access, Checkout return, playback, and isolation
 ```
 
 The API's MongoDB tests run when `MONGODB_URI` is set. They create and drop their own `ringback_test_*` databases:
@@ -337,7 +375,7 @@ The current deployment flow is:
 
 To adapt this deployment, configure the root `.env`, image names, domain in [`deploy/host/Caddyfile`](deploy/host/Caddyfile), LiveKit webhook key, and SIP settings. The host scripts expect Docker Compose, the `lk` CLI, `jq`, `iptables`, Caddy, and systemd; the deployment hook service also uses the `webhook` binary. GitHub Actions expects `RINGBACK_HOOK_URL` and `RINGBACK_HOOK_SECRET`, with the same hook secret installed on the host as described in [`deploy/host/hook.env.example`](deploy/host/hook.env.example).
 
-The deployed dashboard is built with `NEXT_PUBLIC_API_URL=/api`. Changing that value requires rebuilding the web image. Compose shares an `audio-data` volume between the worker and API and stores Redis and MongoDB data in named volumes.
+The browser uses same-origin `/api` routes, which Caddy forwards to the API in deployment. Keep this path when adapting the proxy so call-scoped cookies work for status, audio, and SSE. Compose shares an `audio-data` volume between the worker and API and stores Redis and MongoDB data in named volumes.
 
 The API image runs with `NODE_ENV=production`, so it takes live payments. Add a Stripe webhook endpoint for `https://<your domain>/api/webhooks/stripe`, put its signing secret and your live key in `.env` as `STRIPE_PRODUCTION_WEBHOOK_SECRET` and `STRIPE_PRODUCTION_API_KEY`, and set `RINGBACK_PUBLIC_API_URL` and `RINGBACK_PUBLIC_WEB_URL` to your public addresses.
 
@@ -345,9 +383,9 @@ The API image runs with `NODE_ENV=production`, so it takes live payments. Add a 
 
 | Symptom                                     | Check                                                                                                                       |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard shows no calls                    | Confirm the worker has `REDIS_URL`, the API uses the same Redis instance, and a call has reached an agent conversation.     |
+| Private dashboard is locked                | Reopen the original private link; check token expiry/revocation and the API's `RINGBACK_PUBLIC_WEB_URL` origin. |
 | Worker exits with a missing-variable error  | Load `.env` into the process environment; the worker does not load it automatically.                                        |
 | `POST /call` returns `503`                  | Check the Stripe keys for your `NODE_ENV`, and that LiveKit is reachable with the `twilio-outbound` trunk.                  |
 | ElevenLabs reports an audio format mismatch | Set both agent audio formats to `pcm_48000`.                                                                                |
 | Recordings are unavailable                  | Set `AUDIO_DIR` for both services, ensure the worker can write there and the API can read it, and wait for the call to end. |
-| Browser cannot reach the API                | Check `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS`; rebuild the dashboard after changing its production API URL.                |
+| Browser cannot reach the API                | Check same-origin `/api` routing, `RINGBACK_API_UPSTREAM` locally, and Caddy's API upstream in deployment. |
