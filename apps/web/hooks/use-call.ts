@@ -6,7 +6,7 @@ import { callKey, eventsUrl, turnsKey } from "@/lib/api/config"
 import { ApiError, fetcher } from "@/lib/api/fetcher"
 import type { Call, Turn } from "@/lib/api/types"
 
-const denied = (error?: Error) =>
+const isDenied = (error?: Error) =>
   error instanceof ApiError && [401, 404].includes(error.status)
 
 export function useCall(id: string, onAccessLost: () => void) {
@@ -23,9 +23,12 @@ export function useCall(id: string, onAccessLost: () => void) {
   const { mutate: refreshCall } = call
   const { mutate: refreshTurns } = turns
 
+  // Callers also check this while rendering so stale data never paints.
+  const denied = isDenied(call.error) || isDenied(turns.error)
+
   useEffect(() => {
-    if (denied(call.error) || denied(turns.error)) onAccessLost()
-  }, [call.error, turns.error, onAccessLost])
+    if (denied) onAccessLost()
+  }, [denied, onAccessLost])
 
   useEffect(() => {
     if (!call.data) return
@@ -68,5 +71,5 @@ export function useCall(id: string, onAccessLost: () => void) {
     return () => source.close()
   }, [id, onAccessLost, refreshCall, refreshTurns])
 
-  return { call, turns, connected }
+  return { call, turns, connected, denied }
 }

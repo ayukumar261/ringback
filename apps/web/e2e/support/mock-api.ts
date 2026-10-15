@@ -11,18 +11,36 @@ export const tokens = {
 
 export const recordingSeconds = 4
 
-// Tests flip these flags to move the mocked call through its lifecycle.
+// Tests set the stage to move the mocked call through its lifecycle.
 export interface MockApi {
-  paid: boolean
-  ended: boolean
+  stage: "unpaid" | "paid" | "active" | "ended"
   revoked: boolean
+  turns?: Turn[]
   requests: { url: string; cookie: string; range?: string }[]
 }
 
+const endedTurns = (id: string): Turn[] => [
+  {
+    room: `room-${id}`,
+    seq: 1,
+    role: "agent",
+    text: `Transcript for ${id}`,
+    at: 1000,
+    started_at: 1000,
+  },
+  {
+    room: `room-${id}`,
+    seq: 2,
+    role: "user",
+    text: "Yes, the appointment is confirmed.",
+    at: 3000,
+    started_at: 3000,
+  },
+]
+
 export async function mockApi(context: BrowserContext): Promise<MockApi> {
   const state: MockApi = {
-    paid: false,
-    ended: false,
+    stage: "unpaid",
     revoked: false,
     requests: [],
   }
@@ -68,26 +86,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
       })
     if (suffix === "/turns")
       return reply(
-        state.ended
-          ? ([
-              {
-                room: `room-${id}`,
-                seq: 1,
-                role: "agent",
-                text: `Transcript for ${id}`,
-                at: 1000,
-                started_at: 1000,
-              },
-              {
-                room: `room-${id}`,
-                seq: 2,
-                role: "user",
-                text: "Yes, the appointment is confirmed.",
-                at: 3000,
-                started_at: 3000,
-              },
-            ] satisfies Turn[])
-          : []
+        state.turns ?? (state.stage === "ended" ? endedTurns(id) : [])
       )
     if (suffix === "/audio") {
       const bytes = silentWav(recordingSeconds)
@@ -109,9 +108,11 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
         },
       })
     }
+    const { stage } = state
+    const dialed = stage === "active" || stage === "ended"
     return reply({
       call_id: id,
-      status: state.ended ? "dialed" : state.paid ? "paid" : "unpaid",
+      status: dialed ? "dialed" : stage,
       to: "+15551234567",
       prompt: `Private task for ${id}`,
       amount: 50,
@@ -120,21 +121,23 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
       created_at: new Date().toISOString(),
       access_expires_at: expires,
       checkout_expires_at: expires,
-      checkout_url: state.paid || state.ended ? null : `${web.url}/checkout`,
-      call: state.ended
+      checkout_url: stage === "unpaid" ? `${web.url}/checkout` : null,
+      call: dialed
         ? {
-            status: "ended",
+            status: stage,
             started_at: 1000,
-            ended_at: 1000 + recordingSeconds * 1000,
-            duration_ms: recordingSeconds * 1000,
-            audio_available: true,
+            ...(stage === "ended" && {
+              ended_at: 1000 + recordingSeconds * 1000,
+              duration_ms: recordingSeconds * 1000,
+            }),
+            audio_available: stage === "ended",
             audio_started_at: 1000,
           }
         : null,
     } satisfies Call)
   })
   await context.route("/checkout", async (route) => {
-    state.paid = true
+    state.stage = "paid"
     await route.fulfill({
       contentType: "text/html",
       body: '<a href="/call/a">Return to call</a>',
