@@ -91,9 +91,7 @@ test("anonymous pages and wrong links reveal no private details", async ({
     page.getByRole("status", { name: "Call unavailable" })
   ).toBeVisible()
   await page.goto("/")
-  await expect(
-    page.getByText("Every call has its own private space.")
-  ).toBeVisible()
+  await expect(page.locator("body")).toHaveJSProperty("innerText", "")
   await expect(page.getByText("Private task for a")).toHaveCount(0)
 })
 
