@@ -106,7 +106,7 @@ export const makeStripeClient = (
                       currency: input.currency,
                       unit_amount: input.amount,
                       product_data: {
-                        name: "Ringback call",
+                        name: "Phone call",
                         description: `One call, up to ${input.maxDuration / 60} minutes`,
                       },
                     },

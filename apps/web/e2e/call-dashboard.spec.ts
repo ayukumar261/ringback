@@ -45,10 +45,13 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
 }) => {
   await page.goto(`/call/a#token=${tokens.a}`)
   await expect(page.getByText("Private task for a")).toBeVisible()
+  await expect(page).toHaveTitle("Call")
   await expect(page.locator("main")).toHaveCSS("font-size", "12px")
   await expect(page.getByLabel("Call details")).toContainText(
     '"status": "unpaid"'
   )
+  expect(await page.locator("body").innerText()).not.toMatch(/ringback/i)
+  expect(await page.locator("head").innerHTML()).not.toMatch(/ringback/i)
   await expect(page).toHaveURL("/call/a")
   const cookies = await context.cookies(`${web.url}/api/call/a`)
   expect(cookies).toMatchObject([
@@ -85,6 +88,7 @@ test("anonymous pages and wrong links reveal no private details", async ({
   await expect(
     page.getByRole("status", { name: "Call unavailable" })
   ).toBeVisible()
+  expect(await page.locator("body").innerText()).not.toMatch(/ringback/i)
   await expect(page.getByText("Private task for a")).toHaveCount(0)
   await page.goto(`/call/a#token=${tokens.b}`)
   await expect(

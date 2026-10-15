@@ -67,7 +67,7 @@ describe("Stripe client", () => {
               currency: "usd",
               unit_amount: 50,
               product_data: {
-                name: "Ringback call",
+                name: "Phone call",
                 description: "One call, up to 30 minutes",
               },
             },
