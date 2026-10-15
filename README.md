@@ -137,7 +137,7 @@ Run each command block in a separate terminal, starting from the repository root
 pnpm --filter web dev
 ```
 
-Open the `dashboard_url` returned when creating a call. The home page at [localhost:3000](http://localhost:3000) explains private access and exposes no call history. Browser requests use `/api` on the same origin; Next.js proxies them to `http://127.0.0.1:3001` locally. Set `RINGBACK_API_UPSTREAM` in `apps/web/.env.local` to change the upstream, and set the API's `RINGBACK_PUBLIC_WEB_URL` to the exact browser origin if using a different host or port.
+Open the `dashboard_url` returned when creating a call. The home page at [localhost:3000](http://localhost:3000) is intentionally blank, white in light system mode and black in dark system mode. Browser requests use `/api` on the same origin; Next.js proxies them to `http://127.0.0.1:3001` locally. Set `RINGBACK_API_UPSTREAM` in `apps/web/.env.local` to change the upstream, and set the API's `RINGBACK_PUBLIC_WEB_URL` to the exact browser origin if using a different host or port.
 
 ```sh
 curl http://localhost:3001/health
@@ -291,11 +291,11 @@ One token grants read access to all results for its call: status, metadata, tran
 
 `dashboard_url` opens the private page at `/call/:id`. The browser removes the token fragment from the address bar and submits the token in an Authorization header to `POST /api/call/:id/access`. The API verifies the token and browser Origin, then sets an HttpOnly, SameSite=Lax cookie scoped to `/api/call/:id`, with Secure enabled in production. Cookies expire with the original grant; every read still checks its expiry and revocation. The browser never puts the token in localStorage or query strings.
 
-Open the private dashboard first and use its **Continue to payment** link so browser access is established before Checkout. Stripe returns to the secret-free call URL, where the cookie restores access. If payment was opened directly, or a different browser is used, reopen the original private link. Without valid access, the page shows a generic locked/unavailable message and no call details.
+Open the private dashboard first and use its **Continue to payment** link so browser access is established before Checkout. Stripe returns to the secret-free call URL, where the cookie restores access. If payment was opened directly, or a different browser is used, reopen the original private link. Without valid access, the page shows a small centered lock icon and no call details.
 
-The dashboard shows the task, payment/dispatch progress, live transcript, and recording playback with transcript seeking. The API keeps dispatch `status` separate from the nested `call.status` (`active` or `ended`); `dialed` does not imply completion. Billing/contact snapshots and provider identifiers stay server-side. Private data uses `Cache-Control: no-store`, with noindex and no-referrer protections on private pages. Expiry or revocation stops later reads; open feeds recheck access before each event and during idle keepalives, at most 15 seconds apart. Recordings and transcripts retain the existing deployment's storage lifecycle; token expiry does not delete them.
+The debugging dashboard uses a compact monospace layout with JSON call/request metadata, the prompt, live transcript, and native recording playback with transcript seeking. The API keeps dispatch `status` separate from the nested `call.status` (`active` or `ended`); `dialed` does not imply completion. Billing/contact snapshots and provider identifiers stay server-side. Private data uses `Cache-Control: no-store`, with noindex and no-referrer protections on private pages. Expiry or revocation stops later reads; open feeds recheck access before each event and during idle keepalives, at most 15 seconds apart. Recordings and transcripts retain the existing deployment's storage lifecycle; token expiry does not delete them.
 
-The old `/calls`, `/calls/events`, and room-based transcript/audio routes return `404`, including when a call token is supplied. Global history and operational access are not exposed by these public routes. Pages live under `apps/web/app/(app)`; future documentation can use a sibling route group with its own layout.
+The old `/calls`, `/calls/events`, and room-based transcript/audio routes return `404`, including when a call token is supplied. Global history and operational access are not exposed by these public routes. Private call pages live under `apps/web/app/(app)`; the blank homepage lives in the sibling `(website)` group, outside the app theme and data providers.
 
 ### Creation retries and lost responses
 
