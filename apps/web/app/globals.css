@@ -130,3 +130,45 @@
     @apply font-sans;
     }
 }
+
+/* The public website's palette follows the system color scheme, not the app's theme. */
+@theme {
+    --color-paper: #fcfcfc;
+    --color-ink: #252525;
+    --color-ink-muted: #707070;
+    --color-link: #e6e6e6;
+    --color-link-hover: #d9d9d9;
+    --color-code: #f5f5f5;
+    --color-rule: #e7e7e7;
+    --color-syntax-string: #376b56;
+    --color-syntax-key: #485f88;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-paper: #141414;
+        --color-ink: #ededed;
+        --color-ink-muted: #a2a2a2;
+        --color-link: #2d2d2d;
+        --color-link-hover: #3a3a3a;
+        --color-code: #1b1b1b;
+        --color-rule: #303030;
+        --color-syntax-string: #a4c9ad;
+        --color-syntax-key: #a6bce4;
+    }
+}
+
+/* highlight.js token classes in the website's code samples. */
+@layer components {
+    .hljs-string {
+        color: var(--color-syntax-string);
+    }
+    .hljs-attr,
+    .hljs-built_in,
+    .hljs-literal {
+        color: var(--color-syntax-key);
+    }
+    .hljs-comment {
+        color: var(--color-ink-muted);
+    }
+}
