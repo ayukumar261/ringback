@@ -29,7 +29,6 @@ export default defineConfig({
       command: [
         "pnpm build",
         "cp -R .next/static .next/standalone/apps/web/.next/",
-        "cp -R public .next/standalone/apps/web/",
         "node .next/standalone/apps/web/server.js",
       ].join(" && "),
       url: web.url,
