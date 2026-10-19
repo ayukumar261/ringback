@@ -1,0 +1,304 @@
+# Documentation
+
+The Corbyn AI API creates phone calls and returns what was said on them. This page documents every public endpoint. For a walkthrough of a single call from start to finish, start with the [Introduction](/).
+
+- **Base URL:** `https://corbyn.ai/api`
+- **Format:** JSON requests and responses, except the live event stream and the recording.
+- **Accounts:** none. Creating a call returns an access token for that call. There are no API keys.
+
+<Contents />
+
+## Authentication
+
+Each call has its own access token. [Create a call](#create-a-call) returns it as `access_token`, a 43-character string. To read the call, send the token in the `Authorization` header:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+- The token reads one call: its status, transcript, live events, and recording. It can’t create calls or read any other call.
+- It works for 30 days after the call is created.
+- Corbyn AI stores only a hash of the token, so a lost token can’t be looked up or reissued. To recover from a lost response, see [Retry safely](#retry-safely).
+- A missing or malformed `Authorization` header returns `401 unauthorized`. A wrong, expired, or revoked token returns `404 not_found`, the same as a call that doesn’t exist.
+
+The `dashboard_url` carries the same token after `#token=`. Opening it gives that browser access to the call’s private page for the rest of the 30 days. Treat the token and the link like passwords.
+
+## Create a call
+
+`POST https://corbyn.ai/api/call`
+
+Saves the call and returns a Stripe Checkout link to pay for it. Nothing is dialed until the checkout is paid.
+
+**Body**
+
+- `to` (string, required): the number to call, in E.164 format, such as `+12015550123`. Corbyn AI calls US numbers only: the 50 states and Washington, D.C.
+- `prompt` (string, required): instructions for the voice agent, 1 to 16,000 characters after surrounding whitespace is trimmed. Write it as instructions to the agent: who it’s calling, on whose behalf, what to find out or get done, and any details it might be asked for.
+
+Other fields are ignored. Corbyn AI sets the price and maximum duration.
+
+**Headers**
+
+- `Content-Type: application/json`
+- `Idempotency-Key` (optional): up to 255 characters. Makes the request safe to retry. See [Retry safely](#retry-safely).
+- `Idempotency-Secret` (optional): lets you recover the access token if the response is lost. Requires `Idempotency-Key`.
+
+```bash
+curl -X POST https://corbyn.ai/api/call \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "to": "+12015550123",
+    "prompt": "You are calling Bright Smile Dental on behalf of Jane Doe to confirm her cleaning appointment tomorrow at 3 PM. If the time has changed, ask for the new time. Keep the call brief and polite."
+  }'
+```
+
+**Response:** `201 Created`. Example values are shortened:
+
+```json
+{
+  "call_id": "3f9c…",
+  "status": "unpaid",
+  "checkout_url": "https://checkout.stripe.com/…",
+  "status_url": "https://corbyn.ai/api/call/3f9c…",
+  "access_token": "<token>",
+  "access_expires_at": "2026-11-14T17:00:00.000Z",
+  "dashboard_url": "https://corbyn.ai/call/3f9c…#token=<token>",
+  "amount": 50,
+  "currency": "usd",
+  "max_duration_seconds": 1800
+}
+```
+
+- `call_id`: the call’s ID, used by every other endpoint.
+- `status`: `unpaid` for a new call. See [Call status](#call-status).
+- `checkout_url`: the Stripe Checkout page for this call.
+- `status_url`: the [Get a call](#get-a-call) address for this call.
+- `access_token`: the call’s access token. Save it; Corbyn AI can’t show it again.
+- `access_expires_at`: when the token stops working, as an ISO 8601 timestamp.
+- `dashboard_url`: the call’s private page, with the token after `#token=`.
+- `amount`: the price in cents. `50` is $0.50.
+- `currency`: the price currency, `usd`.
+- `max_duration_seconds`: the longest the call can last. `1800` is 30 minutes.
+
+**Paying:** open `dashboard_url` in a browser and choose **Continue to payment**. After payment, Stripe returns that browser to the dashboard. Opening `checkout_url` directly also pays for the call, but Stripe then returns to a locked page, because that browser never opened the private link. The checkout expires 35 minutes after the call is created.
+
+## Get a call
+
+`GET https://corbyn.ai/api/call/:id`
+
+Returns the call’s payment and dialing status, the saved request, and, once someone answers, the call itself. This is the `status_url` from [Create a call](#create-a-call).
+
+```bash
+curl https://corbyn.ai/api/call/<call_id> \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+**Response:** `200 OK`. This example is a finished call:
+
+```json
+{
+  "call_id": "3f9c…",
+  "status": "dialed",
+  "room": "call_3f9c…",
+  "error": null,
+  "to": "+12015550123",
+  "prompt": "You are calling Bright Smile Dental…",
+  "amount": 50,
+  "currency": "usd",
+  "max_duration_seconds": 1800,
+  "created_at": "2026-10-15T17:00:00.000Z",
+  "access_expires_at": "2026-11-14T17:00:00.000Z",
+  "checkout_expires_at": "2026-10-15T17:35:00.000Z",
+  "checkout_url": null,
+  "call": {
+    "status": "ended",
+    "started_at": 1792083780000,
+    "ended_at": 1792083905000,
+    "duration_ms": 125000,
+    "audio_available": true,
+    "audio_started_at": 1792083780000
+  }
+}
+```
+
+- `status`: payment and dialing status. See [Call status](#call-status).
+- `room`: the call’s room name, which also appears in transcript turns and live events. `null` until the call is dialed.
+- `error`: a short reason code when `status` is `failed`; otherwise `null`.
+- `to` and `prompt`: the request as saved, with the prompt trimmed.
+- `amount`, `currency`, and `max_duration_seconds`: as returned by [Create a call](#create-a-call).
+- `created_at`, `access_expires_at`, and `checkout_expires_at`: ISO 8601 timestamps.
+- `checkout_url`: the Stripe Checkout link while the call is `unpaid` and the checkout hasn’t expired; otherwise `null`.
+- `call`: `null` until someone answers. Then an object with:
+  - `status`: `active` during the conversation, then `ended`.
+  - `started_at` and `ended_at`: when the conversation started and ended, in Unix milliseconds. `ended_at` appears once the call ends.
+  - `duration_ms`: the conversation’s length, once it ends.
+  - `audio_available`: `true` once the call has ended and its recording is ready.
+  - `audio_started_at`: when the recording starts, in Unix milliseconds. Use it to line up transcript turns with the audio.
+
+## Call status
+
+`status` moves forward through these values:
+
+1. `unpaid`: waiting for payment.
+2. `paid`: Stripe confirmed the payment.
+3. `dialing`: the call is being placed.
+4. `dialed`: the call was placed. This doesn’t mean anyone answered; check `call`.
+
+A call can also end early:
+
+- `expired`: the checkout wasn’t paid within 35 minutes. Nothing was charged.
+- `failed`: the call couldn’t be placed, and `error` says why. A failed call isn’t retried, because it may have gone through.
+
+After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
+
+## Get the transcript
+
+`GET https://corbyn.ai/api/call/:id/turns`
+
+Returns the conversation in order, one entry per turn. The list is empty until the call starts.
+
+```bash
+curl https://corbyn.ai/api/call/<call_id>/turns \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+**Response:** `200 OK`
+
+```json
+[
+  {
+    "room": "call_3f9c…",
+    "seq": 1,
+    "role": "agent",
+    "text": "Hi, I am calling on behalf of Jane Doe to confirm her appointment.",
+    "at": 1792083781200
+  },
+  {
+    "room": "call_3f9c…",
+    "seq": 2,
+    "role": "user",
+    "text": "Sure, let me check.",
+    "at": 1792083786400,
+    "started_at": 1792083784100,
+    "ended_at": 1792083786000,
+    "duration_ms": 1900
+  }
+]
+```
+
+- `room`: the call’s room name.
+- `seq`: the turn’s position in the conversation, starting at 1.
+- `role`: `agent` for the Corbyn AI voice agent, `user` for the person who answered, or `tool` for an action the agent took, such as pressing keypad digits.
+- `text`: what was said or done.
+- `at`: when the turn was recorded, in Unix milliseconds.
+- `started_at`, `ended_at`, and `duration_ms`: when the speech started and ended, in Unix milliseconds, when known.
+
+## Stream live events
+
+`GET https://corbyn.ai/api/call/:id/events`
+
+Streams the call as it happens, using [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
+
+```bash
+curl -N https://corbyn.ai/api/call/<call_id>/events \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+```text
+retry: 3000
+
+event: ready
+data: {}
+
+id: 1792083780000-0
+event: call.started
+data: {"event":"call.started","room":"call_3f9c…","started_at":1792083780000}
+
+id: 1792083781200-0
+event: call.turn
+data: {"event":"call.turn","room":"call_3f9c…","seq":1,"role":"agent","text":"Hi, I am calling…","at":1792083781200}
+```
+
+- `ready`: the stream is live. Fetch [Get a call](#get-a-call) and [Get the transcript](#get-the-transcript) now to catch up on anything that happened earlier, and again after every reconnect.
+- `call.started`: someone answered. Includes `started_at`.
+- `call.turn`: a transcript turn, with the same fields as [Get the transcript](#get-the-transcript). A turn whose `seq` you’ve already seen is a correction; replace the earlier one.
+- `call.ended`: the conversation is over. Includes `ended_at`, `duration_ms`, `audio_available`, and `audio_started_at`.
+- `access.unavailable`: the stream can no longer confirm access, for example because the token expired. The stream ends after this event.
+
+Each event has an `id`. When you reconnect, send the last one you received as `Last-Event-ID` to replay recent events you missed. The server sends a comment line at least every 15 seconds to keep the connection open. The stream stays open after the call ends, so close it once you receive `call.ended`.
+
+## Get the recording
+
+`GET https://corbyn.ai/api/call/:id/audio`
+
+Returns the call’s recording as a WAV file (`audio/wav`) once `call.audio_available` is `true`.
+
+```bash
+curl https://corbyn.ai/api/call/<call_id>/audio \
+  -H 'Authorization: Bearer <access_token>' \
+  -o call.wav
+```
+
+- Send a `Range` header to fetch part of the file. The response is `206 Partial Content`, or `416` if the range starts past the end.
+- `404 not_found` means the call has no recording. `503 unavailable` means recordings can’t be served right now.
+
+## Retry safely
+
+Without an `Idempotency-Key`, every request creates a new call. Nothing is charged until a checkout is paid, so sending the request again after an error is safe. Calls nobody pays for expire after 35 minutes.
+
+To make a retry return the original call instead of creating another one, send an `Idempotency-Key` that’s unique to this call. To also recover the access token if the first response never arrives, send an `Idempotency-Secret`: 32 random bytes encoded as unpadded base64url, 43 characters long. Generate it and save it before sending the request:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+```bash
+curl -X POST https://corbyn.ai/api/call \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: confirm-appointment-1' \
+  -H 'Idempotency-Secret: <saved-secret>' \
+  -d '{"to":"+12015550123","prompt":"Confirm the appointment time."}'
+```
+
+A retry with the same key returns the original call, checkout, and access token when it sends the same body and proves it made the original request, with either:
+
+- the original `Idempotency-Secret`, or
+- `Authorization: Bearer <access_token>` for that call.
+
+Otherwise it returns `409 conflict` and reveals nothing. Also note:
+
+- When you’re not sure whether a call was created, retry with the same key. A new key creates a new call.
+- A secret can’t be added on retry to a request that was sent without one. Without a secret, a lost response can’t be recovered; create a new call instead.
+- An access token never creates a call. Sending one with a new key returns `409 conflict`.
+- Keep the secret and the access token out of logs. The secret only works for retries; it can’t read the call.
+
+## Errors
+
+Errors return a JSON body with a code:
+
+```json
+{ "error": "invalid_request" }
+```
+
+- `400 invalid_request`: the request is malformed. For example, the body isn’t valid JSON or is over 100 KB, `to` isn’t in E.164 format, `prompt` is empty or too long, or an idempotency header is invalid.
+- `401 unauthorized`: a request to read a call has no token, or the `Authorization` header is malformed.
+- `404 not_found`: the call doesn’t exist, or the token is wrong, expired, or revoked.
+- `409 conflict`: a retry didn’t match the original request or credentials.
+- `422 prompt_not_allowed`: the prompt asks for a call Corbyn AI won’t make, such as a prank call, cold call, robocall, harassment, impersonation, or a threat.
+- `500 internal`: something went wrong on Corbyn AI’s side.
+- `503 unavailable`: calling is briefly unavailable. Try again in a minute.
+
+## Limits
+
+- **Price:** $0.50 USD per call.
+- **Call length:** up to 30 minutes.
+- **Checkout:** expires 35 minutes after the call is created.
+- **Access token:** works for 30 days after the call is created.
+- **Prompt:** 1 to 16,000 characters.
+- **Request body:** up to 100 KB.
+- **Destinations:** US phone numbers in the 50 states and Washington, D.C.
+
+## Health check
+
+`GET https://corbyn.ai/api/health`
+
+Returns `200 OK` with `{"status":"ok"}` when the API is up.
