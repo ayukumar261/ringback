@@ -50,8 +50,8 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   await expect(page.getByLabel("Call details")).toContainText(
     '"status": "unpaid"'
   )
-  expect(await page.locator("body").innerText()).not.toMatch(/ringback/i)
-  expect(await page.locator("head").innerHTML()).not.toMatch(/ringback/i)
+  expect(await page.locator("body").innerText()).not.toMatch(/ringback|corbyn/i)
+  expect(await page.locator("head").innerHTML()).not.toMatch(/ringback|corbyn/i)
   await expect(page).toHaveURL("/call/a")
   const cookies = await context.cookies(`${web.url}/api/call/a`)
   expect(cookies).toMatchObject([
@@ -88,14 +88,16 @@ test("anonymous pages and wrong links reveal no private details", async ({
   await expect(
     page.getByRole("status", { name: "Call unavailable" })
   ).toBeVisible()
-  expect(await page.locator("body").innerText()).not.toMatch(/ringback/i)
+  expect(await page.locator("body").innerText()).not.toMatch(/ringback|corbyn/i)
   await expect(page.getByText("Private task for a")).toHaveCount(0)
   await page.goto(`/call/a#token=${tokens.b}`)
   await expect(
     page.getByRole("status", { name: "Call unavailable" })
   ).toBeVisible()
   await page.goto("/")
-  await expect(page.locator("body")).toHaveJSProperty("innerText", "")
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Introduction" })
+  ).toBeVisible()
   await expect(page.getByText("Private task for a")).toHaveCount(0)
 })
 

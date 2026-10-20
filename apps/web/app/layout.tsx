@@ -19,11 +19,14 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
+    // Website pages glide to in-page links; the app keeps instant scrolling.
+    // data-scroll-behavior keeps page changes instant where pages scroll smoothly.
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
       className={cn(
-        "antialiased",
+        "antialiased motion-safe:has-[[data-website]]:scroll-smooth",
         fontMono.variable,
         "font-sans",
         inter.variable
