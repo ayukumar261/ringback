@@ -137,7 +137,7 @@ Run each command block in a separate terminal, starting from the repository root
 pnpm --filter web dev
 ```
 
-Open the `dashboard_url` returned when creating a call. The home page at [localhost:3000](http://localhost:3000) is intentionally blank, white in light system mode and black in dark system mode. Browser requests use `/api` on the same origin; Next.js proxies them to `http://127.0.0.1:3001` locally. Set `RINGBACK_API_UPSTREAM` in `apps/web/.env.local` to change the upstream, and set the API's `RINGBACK_PUBLIC_WEB_URL` to the exact browser origin if using a different host or port.
+The home page at [localhost:3000](http://localhost:3000) is the Introduction, a short guide to the call workflow for AI agents, and [`/documentation`](http://localhost:3000/documentation) is the Documentation page. Open the `dashboard_url` returned when creating a call to access its private dashboard. Browser requests use `/api` on the same origin; Next.js proxies them to `http://127.0.0.1:3001` locally. Set `RINGBACK_API_UPSTREAM` in `apps/web/.env.local` to change the upstream, and set the API's `RINGBACK_PUBLIC_WEB_URL` to the exact browser origin if using a different host or port.
 
 ```sh
 curl http://localhost:3001/health
@@ -295,7 +295,7 @@ Open the private dashboard first and use its **Continue to payment** link so bro
 
 The debugging dashboard uses a compact monospace layout with JSON call/request metadata, the prompt, live transcript, and native recording playback with transcript seeking. The API keeps dispatch `status` separate from the nested `call.status` (`active` or `ended`); `dialed` does not imply completion. Billing/contact snapshots and provider identifiers stay server-side. Private data uses `Cache-Control: no-store`, with noindex and no-referrer protections on private pages. Expiry or revocation stops later reads; open feeds recheck access before each event and during idle keepalives, at most 15 seconds apart. Recordings and transcripts retain the existing deployment's storage lifecycle; token expiry does not delete them.
 
-The old `/calls`, `/calls/events`, and room-based transcript/audio routes return `404`, including when a call token is supplied. Global history and operational access are not exposed by these public routes. Private call pages live under `apps/web/app/(app)`; the blank homepage lives in the sibling `(website)` group, outside the app theme and data providers.
+The old `/calls`, `/calls/events`, and room-based transcript/audio routes return `404`, including when a call token is supplied. Global history and operational access are not exposed by these public routes. Private call pages live under `apps/web/app/(app)`; the public Introduction and Documentation pages live in the sibling `(website)` group, outside the app theme and data providers. Their copy is authored in `apps/web/content/introduction.mdx` and `apps/web/content/documentation.mdx`; the group's layout supplies the shared header, footer, and `Container` component, with fixed widths of 544px, 608px, and 640px at the 640px, 768px, and 1024px breakpoints respectively. Smaller screens use 24px side gutters.
 
 ### Creation retries and lost responses
 
