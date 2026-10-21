@@ -1,4 +1,4 @@
-ringback.ayukumar261.com {
+corbyn.ai {
 	handle /hooks/* {
 		reverse_proxy 127.0.0.1:9000
 	}
