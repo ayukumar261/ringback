@@ -104,6 +104,9 @@ jobs:
     services:
       mongo:
         image: mongo:8
+        # MongoDB 8 won't start on the runner's 6.19+ kernel while tcmalloc owns rseq (SERVER-121912); give rseq to glibc.
+        env:
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
         ports:
           - 27017:27017
         options: >-
