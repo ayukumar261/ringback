@@ -16,6 +16,8 @@ import { requestSnapshotHash } from "../handlers/payments/schema.js";
 const events = new Set([
   "checkout.session.completed",
   "checkout.session.expired",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
 ]);
 
 // handleStripeEvent queues the call for a paid Checkout session and marks failed or expired ones.
@@ -63,6 +65,17 @@ export const handleStripeEvent = (event: Stripe.Event) =>
               { $set: { status: "expired" } },
             ),
           );
+        else if (
+          event.type === "checkout.session.async_payment_failed" &&
+          session.status === "complete" &&
+          session.payment_status === "unpaid"
+        )
+          yield* Effect.tryPromise(() =>
+            mongo.requests.updateOne(
+              { _id: record._id, status: { $in: ["unpaid", "expired"] } },
+              { $set: { status: "failed", error: "payment_failed" } },
+            ),
+          );
         return { received: true };
       }
       if (
@@ -76,7 +89,10 @@ export const handleStripeEvent = (event: Stripe.Event) =>
         mongo.requests.updateOne(
           {
             _id: record._id,
-            status: { $in: ["unpaid", "expired"] },
+            $or: [
+              { status: { $in: ["unpaid", "expired"] } },
+              { status: "failed", error: "payment_failed" },
+            ],
           },
           {
             $set: {
@@ -84,6 +100,7 @@ export const handleStripeEvent = (event: Stripe.Event) =>
               purchaseId: purchase._id,
               paidAt: purchase.recordedAt,
             },
+            $unset: { error: "" },
           },
         ),
       );

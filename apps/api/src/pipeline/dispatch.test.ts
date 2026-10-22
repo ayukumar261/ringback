@@ -366,6 +366,47 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     expect(await h.run(dispatchCall)).toBe(false);
     expect(h.dial).toHaveBeenCalledTimes(1);
   });
+  it("dials a tax-inclusive delayed Managed Payments purchase only after payment and only once", async () => {
+    const record = requestFixture();
+    await h.mongo.requests.insertOne(record);
+    const session = sessionFixture({
+      status: "complete",
+      payment_status: "unpaid",
+      managed_payments: { enabled: true },
+      amount_subtotal: 47,
+      amount_total: 50,
+      total_details: { amount_tax: 3, amount_discount: 0, amount_shipping: 0 },
+    });
+    const receive = (type: string) =>
+      h.run(
+        handleStripeEvent(event(session, type)).pipe(
+          Effect.provideService(
+            StripeClient,
+            StripeClient.make({
+              retrieveSession: () =>
+                Effect.succeed({ accountId: "acct_test", session }),
+              createSession: () =>
+                Effect.dieMessage("Unexpected Checkout creation"),
+              verifyEvent: () =>
+                Effect.dieMessage("Unexpected signature verification"),
+            }),
+          ),
+        ),
+      );
+    await receive("checkout.session.completed");
+    expect(await h.run(dispatchCall)).toBe(false);
+    expect(h.dial).not.toHaveBeenCalled();
+
+    session.payment_status = "paid";
+    await receive("checkout.session.async_payment_succeeded");
+    await h.run(dispatchCall);
+    await receive("checkout.session.async_payment_succeeded");
+    expect(await h.run(dispatchCall)).toBe(false);
+    expect(h.dial).toHaveBeenCalledTimes(1);
+    expect((await h.run(readCallRequest(record._id, accessToken))).status).toBe(
+      "dialed",
+    );
+  });
   it("recovers a stale claim without redialing and leaves fresh claims alone", async () => {
     const { result } = await h.paid();
     await h.mongo.requests.updateOne(

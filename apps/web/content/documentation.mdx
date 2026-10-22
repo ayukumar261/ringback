@@ -75,7 +75,7 @@ curl -X POST https://corbyn.ai/api/call \
 - `access_token`: the call’s access token. Save it; Corbyn AI can’t show it again.
 - `access_expires_at`: when the token stops working, as an ISO 8601 timestamp.
 - `dashboard_url`: the call’s private page, with the token after `#token=`.
-- `amount`: the price in cents. `50` is $0.50.
+- `amount`: the price in cents, including applicable tax. `50` is $0.50. Stripe Managed Payments handles tax and the payment methods offered at checkout.
 - `currency`: the price currency, `usd`.
 - `max_duration_seconds`: the longest the call can last. `1800` is 30 minutes.
 
@@ -146,7 +146,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 A call can also end early:
 
 - `expired`: the checkout wasn’t paid within 35 minutes. Nothing was charged.
-- `failed`: the call couldn’t be placed, and `error` says why. A failed call isn’t retried, because it may have gone through.
+- `failed`: payment failed (`error` is `payment_failed`) or the call couldn’t be placed. Nothing is dialed after a failed payment. A failed dial isn’t retried, because it may have gone through.
 
 After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
 

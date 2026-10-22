@@ -2,6 +2,9 @@ import { Config, Data, Effect, Redacted } from "effect";
 import Stripe from "stripe";
 import { environmentConfig, type Environment } from "../environment.js";
 
+// Corbyn's consumer flow sells cloud-hosted AI services for personal use.
+const DEFAULT_PRODUCT_TAX_CODE = "txcd_10105001";
+
 // StripeError is a failed Stripe call, carrying the error code the api responds with.
 export class StripeError extends Data.TaggedError("StripeError")<{
   code: "invalid_request" | "unavailable" | "internal";
@@ -58,6 +61,7 @@ export const makeStripeClient = (
   stripe: Stripe | undefined,
   webhookSecret: string,
   environment: Environment,
+  productTaxCode = DEFAULT_PRODUCT_TAX_CODE,
 ) => {
   const checkEnvironment = (result: CheckoutSession) =>
     result.session.livemode === (environment === "production")
@@ -92,7 +96,7 @@ export const makeStripeClient = (
             const session = await stripe.checkout.sessions.create(
               {
                 mode: "payment",
-                allowed_payment_method_types: ["card"],
+                managed_payments: { enabled: true },
                 customer_creation: "always",
                 client_reference_id: input.requestId,
                 metadata: {
@@ -105,9 +109,12 @@ export const makeStripeClient = (
                     price_data: {
                       currency: input.currency,
                       unit_amount: input.amount,
+                      // Keep the quoted total fixed while Stripe calculates and withholds tax.
+                      tax_behavior: "inclusive",
                       product_data: {
                         name: "Phone call",
                         description: `One call, up to ${input.maxDuration / 60} minutes`,
+                        tax_code: productTaxCode,
                       },
                     },
                   },
@@ -162,6 +169,13 @@ export const stripeConfig = Effect.gen(function* () {
     webhookSecret: Config.redacted(`${prefix}_WEBHOOK_SECRET`).pipe(
       Config.withDefault(Redacted.make("")),
     ),
+    productTaxCode: Config.string("RINGBACK_PRODUCT_TAX_CODE").pipe(
+      Config.withDefault(DEFAULT_PRODUCT_TAX_CODE),
+      Config.validate({
+        message: "RINGBACK_PRODUCT_TAX_CODE must be a Stripe product tax code",
+        validation: (value) => /^txcd_\d{8}$/.test(value),
+      }),
+    ),
   });
 });
 
@@ -170,7 +184,8 @@ export class StripeClient extends Effect.Service<StripeClient>()(
   "api/StripeClient",
   {
     effect: Effect.gen(function* () {
-      const { key, webhookSecret, environment } = yield* stripeConfig;
+      const { key, webhookSecret, environment, productTaxCode } =
+        yield* stripeConfig;
       const value = Redacted.value(key);
       return makeStripeClient(
         value
@@ -178,6 +193,7 @@ export class StripeClient extends Effect.Service<StripeClient>()(
           : undefined,
         Redacted.value(webhookSecret),
         environment,
+        productTaxCode,
       );
     }),
   },

@@ -325,6 +325,115 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
     ).toBe("paid");
   });
+  it("fulfills a Managed Payments purchase whose quoted total includes tax", async () => {
+    const { result, session } = await h.checkout();
+    Object.assign(session, {
+      status: "complete",
+      payment_status: "paid",
+      managed_payments: { enabled: true },
+      amount_subtotal: 47,
+      amount_total: 50,
+      total_details: { amount_tax: 3, amount_discount: 0, amount_shipping: 0 },
+    });
+    await h.run(handleStripeEvent(event(session)));
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
+    expect(
+      await h.mongo.purchases.findOne({ requestId: result.call_id }),
+    ).toMatchObject({
+      amountTotal: 50,
+      currency: "usd",
+    });
+  });
+  it("waits for delayed payment, then fulfills it once despite duplicate and stale events", async () => {
+    const { result, session } = await h.checkout();
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
+    await h.run(handleStripeEvent(event(session)));
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("unpaid");
+
+    session.payment_status = "paid";
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        h.run(
+          handleStripeEvent(
+            event(session, "checkout.session.async_payment_succeeded"),
+          ),
+        ),
+      ),
+    );
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_failed"),
+      ),
+    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("paid");
+    expect(await h.mongo.purchases.countDocuments()).toBe(1);
+  });
+  it("records delayed payment failure and recovers only on authoritative payment", async () => {
+    const { result, session } = await h.checkout();
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_failed"),
+      ),
+    );
+    expect(
+      await h.run(readCallRequest(result.call_id, accessToken)),
+    ).toMatchObject({
+      status: "failed",
+      error: "payment_failed",
+    });
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
+
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_succeeded"),
+      ),
+    );
+    expect(
+      (await h.run(readCallRequest(result.call_id, accessToken))).status,
+    ).toBe("failed");
+
+    session.payment_status = "paid";
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_succeeded"),
+      ),
+    );
+    expect(
+      await h.run(readCallRequest(result.call_id, accessToken)),
+    ).toMatchObject({
+      status: "paid",
+      error: null,
+    });
+    expect(await h.mongo.purchases.countDocuments()).toBe(1);
+  });
+  it("does not reschedule a failed dial when a delayed payment webhook is repeated", async () => {
+    const { result, session } = await h.paid();
+    await h.mongo.requests.updateOne(
+      { _id: result.call_id },
+      {
+        $set: { status: "failed", error: "unavailable" },
+      },
+    );
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_succeeded"),
+      ),
+    );
+    expect(
+      await h.run(readCallRequest(result.call_id, accessToken)),
+    ).toMatchObject({
+      status: "failed",
+      error: "unavailable",
+    });
+  });
   it.each([
     "amount_total",
     "currency",

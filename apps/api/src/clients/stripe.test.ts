@@ -43,13 +43,13 @@ const sdk = () => {
 };
 
 describe("Stripe client", () => {
-  it("creates a fixed-price session with stable idempotency and return URLs", async () => {
+  it("creates a tax-inclusive Managed Payments session with stable idempotency and return URLs", async () => {
     const s = sdk();
     await Effect.runPromise(s.client.createSession(input));
     expect(s.create).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "payment",
-        allowed_payment_method_types: ["card"],
+        managed_payments: { enabled: true },
         client_reference_id: input.requestId,
         customer_creation: "always",
         metadata: {
@@ -66,15 +66,46 @@ describe("Stripe client", () => {
             price_data: {
               currency: "usd",
               unit_amount: 50,
+              tax_behavior: "inclusive",
               product_data: {
                 name: "Phone call",
                 description: "One call, up to 30 minutes",
+                tax_code: "txcd_10105001",
               },
             },
           },
         ],
       }),
       { idempotencyKey: "ringback-checkout-request-test" },
+    );
+    const [args] = s.create.mock.calls[0] as unknown as [
+      Stripe.Checkout.SessionCreateParams,
+    ];
+    expect(args.allowed_payment_method_types).toBeUndefined();
+    expect(args).not.toHaveProperty("payment_method_types");
+  });
+  it("uses the configured product tax category", async () => {
+    const s = sdk();
+    const client = makeStripeClient(
+      s.stripe,
+      secret,
+      "development",
+      "txcd_10105002",
+    );
+    await Effect.runPromise(client.createSession(input));
+    expect(s.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        line_items: [
+          expect.objectContaining({
+            price_data: expect.objectContaining({
+              product_data: expect.objectContaining({
+                tax_code: "txcd_10105002",
+              }),
+            }),
+          }),
+        ],
+      }),
+      expect.anything(),
     );
   });
   it("omits consent collection when not required", async () => {
@@ -224,6 +255,16 @@ describe("Stripe environment configuration", () => {
     STRIPE_PRODUCTION_API_KEY: "sk_live_production_fixture",
     STRIPE_PRODUCTION_WEBHOOK_SECRET: "whsec_production_fixture",
   };
+  it("loads the Managed Payments product category and rejects malformed tax codes", async () => {
+    expect((await load()).productTaxCode).toBe("txcd_10105001");
+    expect(
+      (await load({ RINGBACK_PRODUCT_TAX_CODE: "txcd_10105002" }))
+        .productTaxCode,
+    ).toBe("txcd_10105002");
+    await expect(
+      load({ RINGBACK_PRODUCT_TAX_CODE: "invalid" }),
+    ).rejects.toThrow("Stripe product tax code");
+  });
   it.each([undefined, "development", "production"])(
     "selects the matching credentials for NODE_ENV=%s",
     async (environment) => {

@@ -207,6 +207,7 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 | `STRIPE_SANDBOX_API_KEY`, `STRIPE_SANDBOX_WEBHOOK_SECRET`       | API         | Required for outbound calls in development                                                          |
 | `STRIPE_PRODUCTION_API_KEY`, `STRIPE_PRODUCTION_WEBHOOK_SECRET` | API         | Required for outbound calls in production                                                           |
 | `RINGBACK_CALL_PRICE_CENTS`, `RINGBACK_CALL_CURRENCY`           | API         | Price of one call; defaults to `50` and `usd`                                                       |
+| `RINGBACK_PRODUCT_TAX_CODE`                                     | API         | Managed Payments product category; defaults to `txcd_10105001` (cloud AI services for personal use) |
 | `RINGBACK_PUBLIC_API_URL`, `RINGBACK_PUBLIC_WEB_URL`            | API         | Public addresses used in call links; default to `http://localhost:3001` and `http://localhost:3000` |
 | `RINGBACK_REQUIRE_TERMS`                                        | API         | Require accepting your terms in Checkout; defaults to `false`                                       |
 | `AUDIO_DIR`                                                     | Worker, API | Unset disables recording and audio serving; both services must access the same files                |
@@ -378,6 +379,8 @@ To adapt this deployment, configure the root `.env`, image names, domain in [`de
 The browser uses same-origin `/api` routes, which Caddy forwards to the API in deployment. Keep this path when adapting the proxy so call-scoped cookies work for status, audio, and SSE. Compose shares an `audio-data` volume between the worker and API and stores Redis and MongoDB data in named volumes.
 
 The API image runs with `NODE_ENV=production`, so it takes live payments. Add a Stripe webhook endpoint for `https://<your domain>/api/webhooks/stripe`, put its signing secret and your live key in `.env` as `STRIPE_PRODUCTION_WEBHOOK_SECRET` and `STRIPE_PRODUCTION_API_KEY`, and set `RINGBACK_PUBLIC_API_URL` and `RINGBACK_PUBLIC_WEB_URL` to your public addresses.
+
+Checkout uses Stripe Managed Payments, which must be enabled for the Stripe account. The product uses `RINGBACK_PRODUCT_TAX_CODE` and includes tax in the quoted call price; Stripe controls the available payment methods. Subscribe the webhook to `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, and `checkout.session.async_payment_failed`. Calls are queued only after Stripe confirms payment, including payments that finish asynchronously. A delayed payment failure marks the request `failed` with `payment_failed` and never queues a call.
 
 ## Troubleshooting
 
