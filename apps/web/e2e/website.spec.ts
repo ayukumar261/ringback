@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test"
-import { TERMS_VERSION } from "../../api/src/handlers/payments/schema"
 
 test("Documentation contents link to every section in order", async ({
   page,
@@ -20,7 +19,7 @@ test("Checkout's dated Terms URL preserves the published edition", async ({
 }) => {
   await page.goto("/terms-and-conditions")
   const current = await page.locator("article").innerText()
-  await page.goto(`/terms-and-conditions/${TERMS_VERSION}`)
+  await page.goto("/terms-and-conditions/2026-10-30")
   await expect(
     page.getByRole("heading", {
       name: "Corbyn AI Terms and Conditions",

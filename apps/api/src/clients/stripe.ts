@@ -28,10 +28,6 @@ export interface CheckoutInput {
   terms: TermsPolicy;
 }
 
-// termsAcceptanceMessage pins the checkbox to the edition stored with the request.
-export const termsAcceptanceMessage = (terms: TermsPolicy) =>
-  `I agree to the [Corbyn AI Terms and Conditions (${terms.version})](${terms.url}).`;
-
 // CheckoutSession is a Checkout session plus the Stripe account that owns it.
 export interface CheckoutSession {
   accountId: string;
@@ -107,6 +103,8 @@ export const makeStripeClient = (
                 metadata: {
                   request_id: input.requestId,
                   request_snapshot_hash: input.requestSnapshotHash,
+                  terms_version: input.terms.version,
+                  terms_url: input.terms.url,
                 },
                 line_items: [
                   {
@@ -128,11 +126,6 @@ export const makeStripeClient = (
                 success_url: input.returnUrl,
                 cancel_url: input.returnUrl,
                 consent_collection: { terms_of_service: "required" },
-                custom_text: {
-                  terms_of_service_acceptance: {
-                    message: termsAcceptanceMessage(input.terms),
-                  },
-                },
               },
               { idempotencyKey: `ringback-checkout-${input.requestId}` },
             );

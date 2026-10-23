@@ -32,7 +32,6 @@ import {
 import {
   StripeClient,
   StripeError,
-  termsAcceptanceMessage,
   type CheckoutInput,
 } from "../../clients/stripe.js";
 import { PaymentConfig } from "./config.js";
@@ -228,7 +227,11 @@ describe("checkout", () => {
       client_reference_id: "request-test",
       amount_total: 50,
       currency: "usd",
-      metadata: { request_snapshot_hash: requestFixture().requestSnapshotHash },
+      metadata: {
+        request_snapshot_hash: requestFixture().requestSnapshotHash,
+        terms_version: requestFixture().terms.version,
+        terms_url: requestFixture().terms.url,
+      },
       url: "https://checkout.stripe.com/test",
       customer: "cus_test",
       payment_intent: "pi_test",
@@ -268,6 +271,8 @@ describe("checkout", () => {
             currency: request.currency,
             metadata: {
               request_snapshot_hash: request.requestSnapshotHash,
+              terms_version: request.terms.version,
+              terms_url: request.terms.url,
             },
             url: `https://checkout.stripe.com/test/${id}`,
           }),
@@ -607,7 +612,11 @@ describe("checkout", () => {
           id: "cs_sandbox",
           livemode: false,
           client_reference_id: r.requestId,
-          metadata: { request_snapshot_hash: r.requestSnapshotHash },
+          metadata: {
+            request_snapshot_hash: r.requestSnapshotHash,
+            terms_version: r.terms.version,
+            terms_url: r.terms.url,
+          },
         }),
       }));
       const development = await h.run(
@@ -644,7 +653,11 @@ describe("checkout", () => {
           accountId: "acct_test",
           session: sessionFixture({
             client_reference_id: r.requestId,
-            metadata: { request_snapshot_hash: r.requestSnapshotHash },
+            metadata: {
+              request_snapshot_hash: r.requestSnapshotHash,
+              terms_version: r.terms.version,
+              terms_url: r.terms.url,
+            },
             livemode: environment !== "production",
           }),
         }));
@@ -905,14 +918,15 @@ describe("purchases", () => {
       status: "complete",
       payment_status: "paid",
       consent: { terms_of_service: "accepted", promotions: null },
-      custom_text: {
-        terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
-      },
       livemode: false,
       client_reference_id: "request-test",
       amount_total: 50,
       currency: "usd",
-      metadata: { request_snapshot_hash: "test-snapshot" },
+      metadata: {
+        request_snapshot_hash: "test-snapshot",
+        terms_version: terms.version,
+        terms_url: terms.url,
+      },
       url: "https://checkout.stripe.com/test",
       customer: "cus_test",
       payment_intent: "pi_test",

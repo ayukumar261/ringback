@@ -13,7 +13,7 @@ import {
   LiveKitError,
   type DialInput,
 } from "../clients/livekit.js";
-import { StripeClient, termsAcceptanceMessage } from "../clients/stripe.js";
+import { StripeClient } from "../clients/stripe.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   hash,
@@ -89,16 +89,15 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     status: "complete",
     payment_status: "paid",
     consent: { terms_of_service: "accepted", promotions: null },
-    custom_text: {
-      terms_of_service_acceptance: {
-        message: termsAcceptanceMessage(requestFixture().terms),
-      },
-    },
     livemode: true,
     client_reference_id: "request-test",
     amount_total: 50,
     currency: "usd",
-    metadata: { request_snapshot_hash: requestFixture().requestSnapshotHash },
+    metadata: {
+      request_snapshot_hash: requestFixture().requestSnapshotHash,
+      terms_version: requestFixture().terms.version,
+      terms_url: requestFixture().terms.url,
+    },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
     payment_intent: "pi_test",
@@ -335,7 +334,11 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       await mongo.purchases.insertOne(purchase);
       const session = sessionFixture({
         livemode,
-        metadata: { request_snapshot_hash: record.requestSnapshotHash },
+        metadata: {
+          request_snapshot_hash: record.requestSnapshotHash,
+          terms_version: record.terms.version,
+          terms_url: record.terms.url,
+        },
       });
       return { result: { call_id: record._id }, session };
     },

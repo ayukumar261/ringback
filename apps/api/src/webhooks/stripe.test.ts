@@ -12,7 +12,6 @@ import {
   StripeClient,
   StripeError,
   verifyStripeEvent,
-  termsAcceptanceMessage,
 } from "../clients/stripe.js";
 import { hash, requestSnapshotHash } from "../handlers/payments/schema.js";
 import { HttpApp, HttpRouter } from "@effect/platform";
@@ -87,16 +86,15 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     status: "complete",
     payment_status: "paid",
     consent: { terms_of_service: "accepted", promotions: null },
-    custom_text: {
-      terms_of_service_acceptance: {
-        message: termsAcceptanceMessage(requestFixture().terms),
-      },
-    },
     livemode: false,
     client_reference_id: "request-test",
     amount_total: 50,
     currency: "usd",
-    metadata: { request_snapshot_hash: requestFixture().requestSnapshotHash },
+    metadata: {
+      request_snapshot_hash: requestFixture().requestSnapshotHash,
+      terms_version: requestFixture().terms.version,
+      terms_url: requestFixture().terms.url,
+    },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
     payment_intent: "pi_test",
@@ -164,12 +162,11 @@ const harness = (
     session = sessionFixture({
       status: "open",
       payment_status: "unpaid",
-      metadata: { request_snapshot_hash: record.requestSnapshotHash },
-      custom_text: {
-        terms_of_service_acceptance: {
-          message: termsAcceptanceMessage(record.terms),
-        },
-      } as Stripe.Checkout.Session.CustomText,
+      metadata: {
+        request_snapshot_hash: record.requestSnapshotHash,
+        terms_version: record.terms.version,
+        terms_url: record.terms.url,
+      },
     });
     return { result: { call_id: record._id }, session };
   };
@@ -521,9 +518,6 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       url: "https://example.com/terms-and-conditions/2026-09-30",
     };
     const { session } = await h.checkout({ terms });
-    session.custom_text = {
-      terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
-    } as Stripe.Checkout.Session.CustomText;
     Object.assign(session, { status: "complete", payment_status: "unpaid" });
     await h.run(handleStripeEvent(event(session)));
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
@@ -552,22 +546,12 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
     expect(await h.mongo.purchases.findOne({})).toEqual(purchase);
   });
-  it.each([null, "I accept a different policy"])(
-    "rejects accepted terms when Checkout displayed different wording: %s",
-    async (message) => {
-      const terms = {
-        version: "2026-10-30",
-        url: "https://example.com/terms-and-conditions/2026-10-30",
-      };
-      const { session } = await h.checkout({ terms });
-      Object.assign(session, {
-        status: "complete",
-        payment_status: "paid",
-        consent: { terms_of_service: "accepted", promotions: null },
-        custom_text: {
-          terms_of_service_acceptance: message ? { message } : null,
-        },
-      });
+  it.each(["terms_version", "terms_url"] as const)(
+    "rejects accepted Terms when Checkout metadata has a different %s",
+    async (field) => {
+      const { session } = await h.checkout();
+      Object.assign(session, { status: "complete", payment_status: "paid" });
+      session.metadata![field] = "wrong";
       await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
         "conflict",
       );
@@ -585,9 +569,6 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       status: "complete",
       payment_status: "paid",
       consent: { terms_of_service: "accepted", promotions: null },
-      custom_text: {
-        terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
-      },
     });
     await h.mongo.requests.updateOne(
       { _id: session.client_reference_id! },

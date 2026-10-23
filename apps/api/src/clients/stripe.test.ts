@@ -58,17 +58,13 @@ describe("Stripe client", () => {
         metadata: {
           request_id: input.requestId,
           request_snapshot_hash: "hash",
+          terms_version: input.terms.version,
+          terms_url: input.terms.url,
         },
         expires_at: Math.floor(input.expiresAt.getTime() / 1000),
         success_url: "https://example.com/call/request-test",
         cancel_url: "https://example.com/call/request-test",
         consent_collection: { terms_of_service: "required" },
-        custom_text: {
-          terms_of_service_acceptance: {
-            message:
-              "I agree to the [Corbyn AI Terms and Conditions (2026-10-30)](https://example.com/terms-and-conditions/2026-10-30).",
-          },
-        },
         line_items: [
           {
             quantity: 1,
@@ -92,6 +88,7 @@ describe("Stripe client", () => {
     ];
     expect(args.allowed_payment_method_types).toBeUndefined();
     expect(args).not.toHaveProperty("payment_method_types");
+    expect(args).not.toHaveProperty("custom_text");
   });
   it("uses the configured product tax category", async () => {
     const s = sdk();

@@ -16,7 +16,6 @@ import {
 import {
   StripeClient,
   StripeError,
-  termsAcceptanceMessage,
   type CheckoutSession,
 } from "../../clients/stripe.js";
 import { PaymentConfig } from "./config.js";
@@ -258,6 +257,8 @@ export const createCallRequest = (
         session.amount_total !== record.amount ||
         session.currency !== record.currency ||
         session.metadata?.request_snapshot_hash !== digest ||
+        session.metadata?.terms_version !== record.terms.version ||
+        session.metadata?.terms_url !== record.terms.url ||
         session.livemode !== (environment === "production")
       )
         return yield* new PaymentError({ code: "conflict" });
@@ -355,8 +356,8 @@ export const recordPaidCheckout = (
     )
       return yield* new PaymentError({ code: "invalid_request" });
     if (
-      session.custom_text?.terms_of_service_acceptance?.message !==
-      termsAcceptanceMessage(terms)
+      session.metadata?.terms_version !== terms.version ||
+      session.metadata?.terms_url !== terms.url
     )
       return yield* new PaymentError({ code: "conflict" });
     const purchase: PurchaseDoc = {
