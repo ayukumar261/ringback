@@ -13,7 +13,7 @@ import {
   LiveKitError,
   type DialInput,
 } from "../clients/livekit.js";
-import { StripeClient } from "../clients/stripe.js";
+import { StripeClient, termsAcceptanceMessage } from "../clients/stripe.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   hash,
@@ -47,7 +47,6 @@ const settings = {
   publicApiUrl: "http://localhost:3001",
   publicWebUrl: "http://localhost:3000",
   environment: "production" as const,
-  requireTerms: false,
 };
 type Settings = Omit<PaymentConfig, "_tag">;
 const mongoUri = process.env.MONGODB_URI;
@@ -59,6 +58,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     access: newCallAccess(accessToken, new Date()),
     ...settings,
     maxDuration: MAX_DURATION,
+    terms: {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -85,6 +88,12 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     mode: "payment",
     status: "complete",
     payment_status: "paid",
+    consent: { terms_of_service: "accepted", promotions: null },
+    custom_text: {
+      terms_of_service_acceptance: {
+        message: termsAcceptanceMessage(requestFixture().terms),
+      },
+    },
     livemode: true,
     client_reference_id: "request-test",
     amount_total: 50,
@@ -111,6 +120,10 @@ const purchaseFixture = (changes: Partial<PurchaseDoc> = {}): PurchaseDoc => ({
   amountTotal: 50,
   currency: "usd",
   recordedAt: new Date(),
+  terms: {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
   ...changes,
 });
 const event = (

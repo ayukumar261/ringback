@@ -19,7 +19,10 @@ const input: CheckoutInput = {
   maxDuration: 1800,
   expiresAt: new Date(Date.now() + 35 * 60_000),
   returnUrl: "https://example.com/call/request-test",
-  requireTerms: true,
+  terms: {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
 };
 const sdk = () => {
   const create = vi.fn(
@@ -60,6 +63,12 @@ describe("Stripe client", () => {
         success_url: "https://example.com/call/request-test",
         cancel_url: "https://example.com/call/request-test",
         consent_collection: { terms_of_service: "required" },
+        custom_text: {
+          terms_of_service_acceptance: {
+            message:
+              "I agree to the [Corbyn AI Terms and Conditions (2026-10-30)](https://example.com/terms-and-conditions/2026-10-30).",
+          },
+        },
         line_items: [
           {
             quantity: 1,
@@ -107,23 +116,6 @@ describe("Stripe client", () => {
       }),
       expect.anything(),
     );
-  });
-  it("omits consent collection when not required", async () => {
-    const s = sdk();
-    await Effect.runPromise(
-      s.client.createSession({
-        ...input,
-        requireTerms: false,
-      }),
-    );
-    const [args] = s.create.mock.calls[0] as unknown as [
-      Stripe.Checkout.SessionCreateParams,
-    ];
-    expect(args.consent_collection).toBeUndefined();
-    expect(args.metadata).toEqual({
-      request_id: "request-test",
-      request_snapshot_hash: "hash",
-    });
   });
   it("retrieves authoritative account and session state", async () => {
     const s = sdk();

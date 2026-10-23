@@ -32,6 +32,7 @@ import {
 import {
   StripeClient,
   StripeError,
+  termsAcceptanceMessage,
   type CheckoutInput,
 } from "../../clients/stripe.js";
 import { PaymentConfig } from "./config.js";
@@ -45,7 +46,12 @@ import {
   readCall,
   recordPaidCheckout,
 } from "./http.js";
-import { hash, MAX_DURATION, requestSnapshotHash } from "./schema.js";
+import {
+  hash,
+  MAX_DURATION,
+  requestSnapshotHash,
+  TERMS_VERSION,
+} from "./schema.js";
 import {
   newAccessToken,
   newCallAccess,
@@ -177,7 +183,6 @@ describe("checkout", () => {
     publicApiUrl: "http://localhost:3001",
     publicWebUrl: "http://localhost:3000",
     environment: "production" as const,
-    requireTerms: false,
   };
   type Settings = Omit<PaymentConfig, "_tag">;
   const mongoUri = process.env.MONGODB_URI;
@@ -189,6 +194,10 @@ describe("checkout", () => {
       access: newCallAccess(accessToken, new Date()),
       ...settings,
       maxDuration: MAX_DURATION,
+      terms: {
+        version: "2026-10-30",
+        url: "https://example.com/terms-and-conditions/2026-10-30",
+      },
       policyVersion: "prompt-rules-v1",
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -444,6 +453,7 @@ describe("checkout", () => {
             ...input,
             dashboard_url: "https://untrusted.example",
             returnUrl: "https://untrusted.example",
+            terms: { version: "fake", url: "https://untrusted.example/terms" },
           }),
         ),
       );
@@ -457,6 +467,14 @@ describe("checkout", () => {
       expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(
         `https://example.com/call/${result.call_id}`,
       );
+      const terms = {
+        version: TERMS_VERSION,
+        url: `https://example.com/terms-and-conditions/${TERMS_VERSION}`,
+      };
+      expect(h.createSession.mock.calls[0]![0].terms).toEqual(terms);
+      expect(
+        (await h.mongo.requests.findOne({ _id: result.call_id }))?.terms,
+      ).toEqual(terms);
       expect(
         (await h.mongo.requests.findOne({ _id: result.call_id }))?.dashboardUrl,
       ).toBe(`https://example.com/call/${result.call_id}`);
@@ -500,6 +518,27 @@ describe("checkout", () => {
       expect(await h.mongo.purchases.countDocuments()).toBe(0);
       expect(h.dial).not.toHaveBeenCalled();
     });
+    it("retries a request using its original Terms edition after a policy update", async () => {
+      const terms = {
+        version: "2026-09-30",
+        url: "https://example.com/terms-and-conditions/2026-09-30",
+      };
+      const record = requestFixture({
+        terms,
+        retry: {
+          keyHash: hash(["call", settings.environment, "earlier-edition"]),
+        },
+      });
+      delete record.checkout;
+      await h.mongo.requests.insertOne(record);
+      await h.run(createCallRequest(input, "earlier-edition", { accessToken }));
+      expect(h.createSession.mock.calls[0]![0]).toMatchObject({
+        terms,
+      });
+      expect(
+        (await h.mongo.requests.findOne({ _id: record._id }))?.terms,
+      ).toEqual(terms);
+    });
     it("makes distinct requests when no idempotency key is supplied", async () => {
       const a = await h.run(createCallRequest(input));
       const b = await h.run(createCallRequest(input));
@@ -522,6 +561,10 @@ describe("checkout", () => {
       expect(h.createSession.mock.calls[1]![0]).toMatchObject({
         returnUrl: `http://localhost:3000/call/${result.call_id}`,
         amount: 50,
+        terms: {
+          version: TERMS_VERSION,
+          url: `http://localhost:3000/terms-and-conditions/${TERMS_VERSION}`,
+        },
       });
       expect(result.dashboard_url).toBe(
         `http://localhost:3000/call/${result.call_id}#token=${result.access_token}`,
@@ -850,6 +893,10 @@ describe("checkout", () => {
 
 describe("purchases", () => {
   const mongoUri = process.env.MONGODB_URI;
+  const terms = {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  };
   const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     ({
       id: "cs_test",
@@ -857,6 +904,10 @@ describe("purchases", () => {
       mode: "payment",
       status: "complete",
       payment_status: "paid",
+      consent: { terms_of_service: "accepted", promotions: null },
+      custom_text: {
+        terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
+      },
       livemode: false,
       client_reference_id: "request-test",
       amount_total: 50,
@@ -888,6 +939,7 @@ describe("purchases", () => {
           recordPaidCheckout(
             mongo.purchases as unknown as Collection<PurchaseDoc>,
             { accountId: "acct_test", session: sessionFixture(change) },
+            terms,
           ),
         ),
       ).rejects.toThrow("invalid_request");
@@ -908,6 +960,7 @@ describe("purchases", () => {
           recordPaidCheckout(
             mongo.purchases as unknown as Collection<PurchaseDoc>,
             { accountId: "acct_test", session },
+            terms,
           ),
         ),
       ).rejects.toThrow("invalid_request");
@@ -924,6 +977,7 @@ describe("purchases", () => {
                 accountId: "acct_test",
                 session: sessionFixture({ amount_total }),
               },
+              terms,
             ),
           ),
         ).rejects.toThrow("invalid_request");
@@ -955,7 +1009,7 @@ describe("purchases", () => {
     });
     const record = (session = sessionFixture(), accountId = "acct_test") =>
       Effect.runPromise(
-        recordPaidCheckout(mongo.purchases, { accountId, session }),
+        recordPaidCheckout(mongo.purchases, { accountId, session }, terms),
       );
     it("stores only the purchase snapshot, including customer contact details", async () => {
       const purchase = await record();
@@ -975,6 +1029,7 @@ describe("purchases", () => {
         amountTotal: 50,
         currency: "usd",
         recordedAt: expect.any(Date),
+        terms,
       });
     });
     it("deduplicates concurrent writes and preserves the first snapshot", async () => {

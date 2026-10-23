@@ -11,10 +11,12 @@ import {
   MongoClient,
   type PurchaseDoc,
   type RequestDoc,
+  type TermsPolicy,
 } from "../../clients/mongo.js";
 import {
   StripeClient,
   StripeError,
+  termsAcceptanceMessage,
   type CheckoutSession,
 } from "../../clients/stripe.js";
 import { PaymentConfig } from "./config.js";
@@ -24,6 +26,7 @@ import {
   hash,
   MAX_DURATION,
   POLICY_VERSION,
+  TERMS_VERSION,
   requestSnapshotHash,
 } from "./schema.js";
 import {
@@ -182,7 +185,10 @@ export const createCallRequest = (
           currency: settings.currency,
           maxDuration: MAX_DURATION,
           policyVersion: POLICY_VERSION,
-          requireTerms: settings.requireTerms,
+          terms: {
+            version: TERMS_VERSION,
+            url: `${settings.publicWebUrl}/terms-and-conditions/${TERMS_VERSION}`,
+          },
           environment,
         };
         const fresh: RequestDoc = {
@@ -242,7 +248,7 @@ export const createCallRequest = (
           record.dashboardUrl ??
           record.callUrl ??
           `${settings.publicWebUrl}/call/${record._id}`,
-        requireTerms: record.requireTerms,
+        terms: record.terms,
       });
       if (
         !accountId ||
@@ -318,12 +324,14 @@ export const createCall = paymentResponse(
 export const recordPaidCheckout = (
   purchases: Collection<PurchaseDoc>,
   { accountId, session }: CheckoutSession,
+  terms: TermsPolicy,
 ) =>
   Effect.gen(function* () {
     if (
       session.mode !== "payment" ||
       session.status !== "complete" ||
-      session.payment_status !== "paid"
+      session.payment_status !== "paid" ||
+      session.consent?.terms_of_service !== "accepted"
     )
       return yield* new PaymentError({ code: "invalid_request" });
     const customerId =
@@ -346,6 +354,11 @@ export const recordPaidCheckout = (
       !session.currency
     )
       return yield* new PaymentError({ code: "invalid_request" });
+    if (
+      session.custom_text?.terms_of_service_acceptance?.message !==
+      termsAcceptanceMessage(terms)
+    )
+      return yield* new PaymentError({ code: "conflict" });
     const purchase: PurchaseDoc = {
       _id: `${accountId}:${session.livemode ? "live" : "test"}:${session.id}`,
       requestId: session.client_reference_id,
@@ -362,6 +375,7 @@ export const recordPaidCheckout = (
       amountTotal: session.amount_total,
       currency: session.currency,
       recordedAt: new Date(),
+      terms,
     };
     const stored = yield* Effect.tryPromise({
       try: () =>

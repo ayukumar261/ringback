@@ -12,7 +12,10 @@ const snapshot = {
   currency: "usd",
   maxDuration: 120,
   policyVersion: "prompt-rules-v1",
-  requireTerms: false,
+  terms: {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
   environment: "production" as const,
 };
 
@@ -68,7 +71,6 @@ describe("request snapshot", () => {
     { currency: "eur" },
     { maxDuration: 240 },
     { policyVersion: "v2" },
-    { requireTerms: true },
     { environment: "development" as const },
   ])("binds each purchase term %j", (change) => {
     expect(requestSnapshotHash({ ...snapshot, ...change })).not.toBe(
@@ -78,5 +80,21 @@ describe("request snapshot", () => {
   it("ignores lifecycle changes", () => {
     const dialed = { ...snapshot, status: "dialed" };
     expect(requestSnapshotHash(dialed)).toBe(requestSnapshotHash(snapshot));
+  });
+  it("binds the Terms edition and its URL", () => {
+    const terms = {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    };
+    const bound = requestSnapshotHash({ ...snapshot, terms });
+    expect(bound).not.toBe(
+      requestSnapshotHash({ ...snapshot, terms: { ...terms, version: "v2" } }),
+    );
+    expect(bound).not.toBe(
+      requestSnapshotHash({
+        ...snapshot,
+        terms: { ...terms, url: "https://untrusted.example/terms" },
+      }),
+    );
   });
 });

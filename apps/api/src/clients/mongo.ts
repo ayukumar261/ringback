@@ -2,6 +2,12 @@ import { Config, Effect } from "effect";
 import { MongoClient as MongoDriver, type Collection } from "mongodb";
 import type { Environment } from "../environment.js";
 
+// TermsPolicy identifies a preserved edition of the purchase terms.
+export interface TermsPolicy {
+  version: string;
+  url: string;
+}
+
 // PurchaseDoc is one paid Checkout session with the customer's details at payment time.
 export interface PurchaseDoc {
   _id: string;
@@ -19,6 +25,8 @@ export interface PurchaseDoc {
   amountTotal: number;
   currency: string;
   recordedAt: Date;
+  // Stripe confirmed acceptance of this specific edition.
+  terms: TermsPolicy;
 }
 
 // createPurchaseIndexes records each session once and finds purchases by request or customer.
@@ -48,7 +56,7 @@ export interface RequestDoc {
   currency: string;
   maxDuration: number;
   policyVersion: string;
-  requireTerms: boolean;
+  terms: TermsPolicy;
   environment: Environment;
   createdAt: Date;
   expiresAt: Date;

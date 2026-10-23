@@ -1,6 +1,7 @@
 import { Config, Data, Effect, Redacted } from "effect";
 import Stripe from "stripe";
 import { environmentConfig, type Environment } from "../environment.js";
+import type { TermsPolicy } from "./mongo.js";
 
 // Corbyn's consumer flow sells cloud-hosted AI services for personal use.
 const DEFAULT_PRODUCT_TAX_CODE = "txcd_10105001";
@@ -24,8 +25,12 @@ export interface CheckoutInput {
   maxDuration: number;
   expiresAt: Date;
   returnUrl: string;
-  requireTerms: boolean;
+  terms: TermsPolicy;
 }
+
+// termsAcceptanceMessage pins the checkbox to the edition stored with the request.
+export const termsAcceptanceMessage = (terms: TermsPolicy) =>
+  `I agree to the [Corbyn AI Terms and Conditions (${terms.version})](${terms.url}).`;
 
 // CheckoutSession is a Checkout session plus the Stripe account that owns it.
 export interface CheckoutSession {
@@ -122,9 +127,12 @@ export const makeStripeClient = (
                 expires_at: Math.floor(input.expiresAt.getTime() / 1000),
                 success_url: input.returnUrl,
                 cancel_url: input.returnUrl,
-                ...(input.requireTerms && {
-                  consent_collection: { terms_of_service: "required" as const },
-                }),
+                consent_collection: { terms_of_service: "required" },
+                custom_text: {
+                  terms_of_service_acceptance: {
+                    message: termsAcceptanceMessage(input.terms),
+                  },
+                },
               },
               { idempotencyKey: `ringback-checkout-${input.requestId}` },
             );

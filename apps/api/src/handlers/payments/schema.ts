@@ -6,6 +6,9 @@ import { PaymentError } from "./errors.js";
 // POLICY_VERSION names the prompt rules a request was checked against.
 export const POLICY_VERSION = "prompt-rules-v1";
 
+// TERMS_VERSION matches the preserved public Terms edition used by new checkouts.
+export const TERMS_VERSION = "2026-10-30";
+
 // MAX_DURATION caps every call at 30 minutes.
 export const MAX_DURATION = 30 * 60;
 
@@ -48,7 +51,7 @@ export const requestSnapshotHash = (
     | "currency"
     | "maxDuration"
     | "policyVersion"
-    | "requireTerms"
+    | "terms"
     | "environment"
   >,
 ) =>
@@ -59,6 +62,7 @@ export const requestSnapshotHash = (
     r.currency,
     r.maxDuration,
     r.policyVersion,
-    r.requireTerms,
     r.environment,
+    r.terms.version,
+    r.terms.url,
   ]);

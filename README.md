@@ -209,7 +209,6 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 | `RINGBACK_CALL_PRICE_CENTS`, `RINGBACK_CALL_CURRENCY`           | API         | Price of one call; defaults to `50` and `usd`                                                       |
 | `RINGBACK_PRODUCT_TAX_CODE`                                     | API         | Managed Payments product category; defaults to `txcd_10105001` (cloud AI services for personal use) |
 | `RINGBACK_PUBLIC_API_URL`, `RINGBACK_PUBLIC_WEB_URL`            | API         | Public addresses used in call links; default to `http://localhost:3001` and `http://localhost:3000` |
-| `RINGBACK_REQUIRE_TERMS`                                        | API         | Require accepting your terms in Checkout; defaults to `false`                                       |
 | `AUDIO_DIR`                                                     | Worker, API | Unset disables recording and audio serving; both services must access the same files                |
 | `WORKER_HTTP_ADDR`                                              | Worker      | `127.0.0.1:8080`                                                                                    |
 | `PORT`                                                          | API         | `3001`                                                                                              |
@@ -381,6 +380,10 @@ The browser uses same-origin `/api` routes, which Caddy forwards to the API in d
 The API image runs with `NODE_ENV=production`, so it takes live payments. Add a Stripe webhook endpoint for `https://<your domain>/api/webhooks/stripe`, put its signing secret and your live key in `.env` as `STRIPE_PRODUCTION_WEBHOOK_SECRET` and `STRIPE_PRODUCTION_API_KEY`, and set `RINGBACK_PUBLIC_API_URL` and `RINGBACK_PUBLIC_WEB_URL` to your public addresses.
 
 Checkout uses Stripe Managed Payments, which must be enabled for the Stripe account. The product uses `RINGBACK_PRODUCT_TAX_CODE` and includes tax in the quoted call price; Stripe controls the available payment methods. Subscribe the webhook to `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, and `checkout.session.async_payment_failed`. Calls are queued only after Stripe confirms payment, including payments that finish asynchronously. A delayed payment failure marks the request `failed` with `payment_failed` and never queues a call.
+
+Every Checkout Session requires Terms acceptance, including sandbox sessions. Checkout links its acceptance checkbox to the dated Terms edition saved with the request. After verifying payment and acceptance with Stripe, the API stores `terms` on the purchase with the edition's `version` and `url`. The purchase's existing `recordedAt` records when that verified purchase was saved. Duplicate webhooks preserve the original record. Both requests and purchases require the Terms edition; the database is reset rather than backfilling earlier records.
+
+The current edition is `2026-10-30`, preserved at `/terms-and-conditions/2026-10-30`. For a policy update, add a new dated MDX file and public route, update the current Terms page's import and `TERMS_VERSION` in `apps/api/src/handlers/payments/schema.ts`, and leave earlier editions intact. Deploy the web and API changes together; existing Checkout Sessions retain their original edition.
 
 ## Troubleshooting
 

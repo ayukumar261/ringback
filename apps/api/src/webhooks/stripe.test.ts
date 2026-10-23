@@ -12,6 +12,7 @@ import {
   StripeClient,
   StripeError,
   verifyStripeEvent,
+  termsAcceptanceMessage,
 } from "../clients/stripe.js";
 import { hash, requestSnapshotHash } from "../handlers/payments/schema.js";
 import { HttpApp, HttpRouter } from "@effect/platform";
@@ -45,7 +46,6 @@ const settings = {
   publicApiUrl: "http://localhost:3001",
   publicWebUrl: "http://localhost:3000",
   environment: "development" as const,
-  requireTerms: false,
 };
 const mongoUri = process.env.MONGODB_URI;
 const secret = "whsec_test_fixture";
@@ -56,6 +56,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     inputHash: hash(input),
     access: newCallAccess(accessToken, new Date()),
     ...settings,
+    terms: {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -82,6 +86,12 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     mode: "payment",
     status: "complete",
     payment_status: "paid",
+    consent: { terms_of_service: "accepted", promotions: null },
+    custom_text: {
+      terms_of_service_acceptance: {
+        message: termsAcceptanceMessage(requestFixture().terms),
+      },
+    },
     livemode: false,
     client_reference_id: "request-test",
     amount_total: 50,
@@ -155,6 +165,11 @@ const harness = (
       status: "open",
       payment_status: "unpaid",
       metadata: { request_snapshot_hash: record.requestSnapshotHash },
+      custom_text: {
+        terms_of_service_acceptance: {
+          message: termsAcceptanceMessage(record.terms),
+        },
+      } as Stripe.Checkout.Session.CustomText,
     });
     return { result: { call_id: record._id }, session };
   };
@@ -483,15 +498,105 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       "conflict",
     );
   });
-  it("enforces the stored terms setting after configuration changes", async () => {
-    const { session } = await h.checkout({ requireTerms: true });
-    Object.assign(session, { status: "complete", payment_status: "paid" });
+  it("requires Terms acceptance before recording a paid purchase", async () => {
+    const { session } = await h.checkout();
+    Object.assign(session, {
+      status: "complete",
+      payment_status: "paid",
+      consent: null,
+    });
     await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
       "invalid_request",
     );
     session.consent = { terms_of_service: "accepted", promotions: null };
     await h.run(handleStripeEvent(event(session)));
     expect(await h.mongo.purchases.countDocuments()).toBe(1);
+    expect((await h.mongo.purchases.findOne({}))?.terms).toEqual(
+      requestFixture().terms,
+    );
+  });
+  it("records the checkout's Terms edition only after authoritative payment and consent", async () => {
+    const terms = {
+      version: "2026-09-30",
+      url: "https://example.com/terms-and-conditions/2026-09-30",
+    };
+    const { session } = await h.checkout({ terms });
+    session.custom_text = {
+      terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
+    } as Stripe.Checkout.Session.CustomText;
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
+    await h.run(handleStripeEvent(event(session)));
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
+
+    session.payment_status = "paid";
+    session.consent = null;
+    const accepted = {
+      terms_of_service: "accepted",
+      promotions: null,
+    } as const;
+    await expect(
+      h.run(handleStripeEvent(event({ ...session, consent: accepted }))),
+    ).rejects.toThrow("invalid_request");
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
+
+    session.consent = accepted;
+    await h.run(
+      handleStripeEvent(
+        event(session, "checkout.session.async_payment_succeeded"),
+      ),
+    );
+    const purchase = await h.mongo.purchases.findOne({});
+    expect(purchase?.terms).toEqual(terms);
+    expect(purchase?.recordedAt).toBeInstanceOf(Date);
+    await h.run(handleStripeEvent(event(session)));
+    expect(await h.mongo.purchases.countDocuments()).toBe(1);
+    expect(await h.mongo.purchases.findOne({})).toEqual(purchase);
+  });
+  it.each([null, "I accept a different policy"])(
+    "rejects accepted terms when Checkout displayed different wording: %s",
+    async (message) => {
+      const terms = {
+        version: "2026-10-30",
+        url: "https://example.com/terms-and-conditions/2026-10-30",
+      };
+      const { session } = await h.checkout({ terms });
+      Object.assign(session, {
+        status: "complete",
+        payment_status: "paid",
+        consent: { terms_of_service: "accepted", promotions: null },
+        custom_text: {
+          terms_of_service_acceptance: message ? { message } : null,
+        },
+      });
+      await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
+        "conflict",
+      );
+      expect(await h.mongo.purchases.countDocuments()).toBe(0);
+      expect((await h.mongo.requests.findOne({}))?.status).toBe("unpaid");
+    },
+  );
+  it("rejects a Terms edition changed after Checkout was created", async () => {
+    const terms = {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    };
+    const { session } = await h.checkout({ terms });
+    Object.assign(session, {
+      status: "complete",
+      payment_status: "paid",
+      consent: { terms_of_service: "accepted", promotions: null },
+      custom_text: {
+        terms_of_service_acceptance: { message: termsAcceptanceMessage(terms) },
+      },
+    });
+    await h.mongo.requests.updateOne(
+      { _id: session.client_reference_id! },
+      { $set: { "terms.version": "2026-11-01" } },
+    );
+    await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
+      "conflict",
+    );
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
   });
   it("marks an expired checkout and can recover on authoritative payment", async () => {
     const { result, session } = await h.checkout();

@@ -28,7 +28,6 @@ const settings = PaymentConfig.make({
   amount: 50,
   currency: "usd",
   environment: "production",
-  requireTerms: false,
   publicApiUrl: "https://ringback.test/api",
   publicWebUrl: "https://ringback.test",
 });
@@ -43,7 +42,10 @@ const fixture = (id: string, token: string): RequestDoc => ({
   currency: "usd",
   maxDuration: 1800,
   policyVersion: "v1",
-  requireTerms: false,
+  terms: {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
   environment: "production",
   createdAt: new Date(),
   expiresAt: new Date(Date.now() + 35 * 60_000),

@@ -25,7 +25,6 @@ describe("payment configuration", () => {
       environment: "development",
       amount: 50,
       currency: "usd",
-      requireTerms: false,
       publicWebUrl: "http://localhost:3000",
     });
   });

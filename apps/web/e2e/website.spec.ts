@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test"
+import { TERMS_VERSION } from "../../api/src/handlers/payments/schema"
 
 test("Documentation contents link to every section in order", async ({
   page,
@@ -12,4 +13,22 @@ test("Documentation contents link to every section in order", async ({
     .locator("article h2")
     .evaluateAll((headings) => headings.map((h) => `#${h.id}`))
   expect(links).toEqual(sections)
+})
+
+test("Checkout's dated Terms URL preserves the published edition", async ({
+  page,
+}) => {
+  await page.goto("/terms-and-conditions")
+  const current = await page.locator("article").innerText()
+  await page.goto(`/terms-and-conditions/${TERMS_VERSION}`)
+  await expect(
+    page.getByRole("heading", {
+      name: "Corbyn AI Terms and Conditions",
+      exact: true,
+    })
+  ).toBeVisible()
+  expect(await page.locator("article").innerText()).toBe(current)
+  await expect(page.locator("article")).toContainText(
+    "Effective date: October 30, 2026"
+  )
 })

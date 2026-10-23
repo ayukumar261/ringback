@@ -20,7 +20,6 @@ const settings = {
   publicApiUrl: "http://localhost:3001",
   publicWebUrl: "http://localhost:3000",
   environment: "development" as const,
-  requireTerms: false,
 };
 const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
   const record: RequestDoc = {
@@ -29,6 +28,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     inputHash: "test-input",
     requestSnapshotHash: "test-snapshot",
     ...settings,
+    terms: {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -55,6 +58,10 @@ const purchaseFixture = (changes: Partial<PurchaseDoc> = {}): PurchaseDoc => ({
   amountTotal: 50,
   currency: "usd",
   recordedAt: new Date(),
+  terms: {
+    version: "2026-10-30",
+    url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
   ...changes,
 });
 

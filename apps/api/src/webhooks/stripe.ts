@@ -78,12 +78,11 @@ export const handleStripeEvent = (event: Stripe.Event) =>
           );
         return { received: true };
       }
-      if (
-        record.requireTerms &&
-        session.consent?.terms_of_service !== "accepted"
-      )
-        return yield* new PaymentError({ code: "invalid_request" });
-      const purchase = yield* recordPaidCheckout(mongo.purchases, verified);
+      const purchase = yield* recordPaidCheckout(
+        mongo.purchases,
+        verified,
+        record.terms,
+      );
       // the purchase and the queue are separate writes, so retrying after either one is safe
       yield* Effect.tryPromise(() =>
         mongo.requests.updateOne(

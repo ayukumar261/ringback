@@ -48,9 +48,6 @@ export const paymentConfig = Config.all({
   publicApiUrl: publicUrl("RINGBACK_PUBLIC_API_URL", "http://localhost:3001"),
   publicWebUrl: publicUrl("RINGBACK_PUBLIC_WEB_URL", "http://localhost:3000"),
   environment: environmentConfig,
-  requireTerms: Config.boolean("RINGBACK_REQUIRE_TERMS").pipe(
-    Config.withDefault(false),
-  ),
 });
 
 // PaymentConfig is the validated payments settings.
