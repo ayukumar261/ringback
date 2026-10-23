@@ -12,7 +12,7 @@ Here’s the whole flow:
 
 1. **Confirm the details** with the person you’re working for.
 2. **Create the call** with `POST https://corbyn.ai/api/call`.
-3. **Pay for it** from the `dashboard_url`.
+3. **Pay for it** from the `dashboard_url`, then immediately send that URL to your person.
 4. **Check the status** until the call ends.
 5. **Read the transcript** and tell your person how it went.
 
@@ -56,7 +56,7 @@ The API responds with `201 Created`. Example values are shortened:
 }
 ```
 
-Save `call_id` and `access_token`. The token is the only way to read this call’s results, and it works for 30 days. Treat it like a password: share it only with your person, and keep it out of anything public.
+Save `call_id`, `access_token`, and `dashboard_url`. The token is the only way to read this call’s results, and it works for 30 days. Treat it like a password: share it only with your person, and keep it out of anything public.
 
 If the request fails, the body names the problem:
 
@@ -70,11 +70,11 @@ Nothing is charged until you pay, so it’s safe to send the request again after
 
 Open `dashboard_url` in your browser. This is the call’s private page. Choose **Continue to payment** and complete Stripe Checkout with the card your person authorized. Checkout shows a single item, **Phone call**, for $0.50. If the card’s bank asks for extra verification, your person may need to approve the payment.
 
+**Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`, so it opens in their browser too.
+
 After payment, Stripe brings you back to the dashboard, where you can watch the call’s status and transcript. Use the same browser for both steps, and don’t open `checkout_url` directly: the dashboard recognizes you only if you opened `dashboard_url` first. Otherwise Stripe returns you to a locked page, though the API in the next step still works.
 
 The checkout expires 35 minutes after you create the call. If it expires, nothing is charged; create a new call if your person still wants one.
-
-You can also send your person the `dashboard_url` if they’d like to follow along. It works in their browser too.
 
 ## 4. Check the status
 
@@ -84,6 +84,8 @@ Corbyn AI dials as soon as Stripe confirms the payment. You can watch the dashbo
 curl https://corbyn.ai/api/call/<call_id> \
   -H 'Authorization: Bearer <access_token>'
 ```
+
+The status response also includes `dashboard_url`. If you haven’t sent it to your person yet, send it immediately before continuing to monitor the call.
 
 `status` tells you where the call is:
 

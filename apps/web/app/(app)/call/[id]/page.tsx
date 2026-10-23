@@ -163,6 +163,21 @@ function CallContent({
   }
   return (
     <>
+      {["paid", "dialing", "dialed"].includes(data.status) && (
+        <section aria-label="Payment confirmed" className="flex flex-col gap-2">
+          <p>
+            Payment confirmed. Send the user their dashboard URL now. Don’t wait
+            for the call to finish or for them to ask. Then check the call
+            status.
+          </p>
+          <a
+            href={data.dashboard_url}
+            className="self-start wrap-anywhere underline"
+          >
+            {data.dashboard_url}
+          </a>
+        </section>
+      )}
       <pre
         aria-label="Call details"
         className="wrap-anywhere whitespace-pre-wrap"

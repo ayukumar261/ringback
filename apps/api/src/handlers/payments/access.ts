@@ -13,6 +13,13 @@ export const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 
 export const newAccessToken = () => randomBytes(32).toString("base64url");
 
+export const callDashboardUrl = (
+  request: Pick<RequestDoc, "_id" | "dashboardUrl" | "callUrl">,
+  token: string,
+  publicWebUrl: string,
+) =>
+  `${request.dashboardUrl ?? request.callUrl ?? `${publicWebUrl}/call/${request._id}`}#token=${token}`;
+
 // Require a canonical encoding of exactly 32 bytes, including for recovery secrets.
 export const validAccessSecret = (secret: string) =>
   /^[A-Za-z0-9_-]{43}$/.test(secret) &&

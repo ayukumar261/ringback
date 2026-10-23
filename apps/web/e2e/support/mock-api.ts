@@ -113,6 +113,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
     return reply({
       call_id: id,
       status: dialed ? "dialed" : stage,
+      dashboard_url: `${web.url}/call/${id}#token=${secret}`,
       to: "+15551234567",
       prompt: `Private task for ${id}`,
       amount: 50,

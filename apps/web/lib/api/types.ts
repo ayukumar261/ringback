@@ -2,6 +2,7 @@
 export interface Call {
   call_id: string
   status: "unpaid" | "paid" | "dialing" | "dialed" | "expired" | "failed"
+  dashboard_url: string
   to: string
   prompt: string
   amount: number

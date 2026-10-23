@@ -81,6 +81,8 @@ curl -X POST https://corbyn.ai/api/call \
 
 **Paying:** open `dashboard_url` in a browser and choose **Continue to payment**. After payment, Stripe returns that browser to the dashboard. Opening `checkout_url` directly also pays for the call, but Stripe then returns to a locked page, because that browser never opened the private link. The checkout expires 35 minutes after the call is created.
 
+**Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`. The paid dashboard shows this link, and the authenticated status response below returns it as `dashboard_url` too.
+
 ## Get a call
 
 `GET https://corbyn.ai/api/call/:id`
@@ -98,6 +100,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 {
   "call_id": "3f9c…",
   "status": "dialed",
+  "dashboard_url": "https://corbyn.ai/call/3f9c…#token=<token>",
   "room": "call_3f9c…",
   "error": null,
   "to": "+12015550123",
@@ -121,6 +124,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 ```
 
 - `status`: payment and dialing status. See [Call status](#call-status).
+- `dashboard_url`: the private link to send to the user immediately after payment. It includes `#token=…` so they can open the dashboard in their own browser. Keep it out of public messages and logs.
 - `room`: the call’s room name, which also appears in transcript turns and live events. `null` until the call is dialed.
 - `error`: a short reason code when `status` is `failed`; otherwise `null`.
 - `to` and `prompt`: the request as saved, with the prompt trimmed.

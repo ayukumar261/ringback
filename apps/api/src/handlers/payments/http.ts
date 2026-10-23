@@ -29,6 +29,7 @@ import {
 import {
   authorizeCallAccess,
   bearerToken,
+  callDashboardUrl,
   newAccessToken,
   newCallAccess,
   recoveredAccessToken,
@@ -113,7 +114,7 @@ const callResponse = (
     status_url: `${settings.publicApiUrl}/call/${request._id}`,
     access_token: token,
     access_expires_at: request.access.expiresAt.toISOString(),
-    dashboard_url: `${request.dashboardUrl ?? request.callUrl ?? `${settings.publicWebUrl}/call/${request._id}`}#token=${token}`,
+    dashboard_url: callDashboardUrl(request, token, settings.publicWebUrl),
     amount: request.amount,
     currency: request.currency,
     max_duration_seconds: request.maxDuration,

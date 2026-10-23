@@ -243,24 +243,48 @@ describe("call authorization through the application router", () => {
     const body = await response.json();
     expect(body).toMatchObject({
       call_id: "a",
+      dashboard_url: `${settings.publicWebUrl}/call/a#token=${tokenA}`,
       prompt: "Task for a",
       call: { status: "ended", audio_available: true },
     });
     expect(h.findCall).toHaveBeenCalledWith({ room: "room-a" });
+    const { dashboard_url: dashboardUrl, ...metadata } = body;
+    expect(dashboardUrl).not.toContain(tokenB);
     for (const secret of [
       tokenA,
+      tokenB,
       "purchase-private",
       "acct-private",
       "provider-private",
       "a.wav",
       "tokenHash",
     ])
-      expect(JSON.stringify(body)).not.toContain(secret);
+      expect(JSON.stringify(metadata)).not.toContain(secret);
     h.calls.splice(0, 1);
     const waiting = await (await h.request("/call/a", bearer())).json();
     expect(waiting.call).toBeNull();
     expect(waiting.checkout_url).toBe("https://checkout.stripe.com/private");
   });
+  it.each(["paid", "dialing", "dialed"] as const)(
+    "returns a shareable dashboard URL immediately for a %s call without waiting for it to end",
+    async (status) => {
+      const h = await harness();
+      h.records[0]!.status = status;
+      h.records[0]!.dashboardUrl = "https://original.test/call/a";
+      h.calls.splice(0);
+      for (const credentials of [bearer(), cookie()]) {
+        const response = await h.request("/call/a", credentials);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.json()).toMatchObject({
+          status,
+          dashboard_url: `https://original.test/call/a#token=${tokenA}`,
+          checkout_url: null,
+          call: null,
+        });
+      }
+    },
+  );
 
   it("returns each transcript only to its own credential", async () => {
     const h = await harness();

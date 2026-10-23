@@ -14,6 +14,7 @@ import { CallsConfig } from "./config.js";
 import {
   authorizeCallAccess,
   bearerToken,
+  callDashboardUrl,
   validAccessSecret,
 } from "../payments/access.js";
 import { PaymentConfig } from "../payments/config.js";
@@ -80,7 +81,8 @@ export const bootstrapCallAccess = callResponse(
 // Only explicitly selected call-facing fields can leave this boundary.
 export const callSnapshot = callResponse(
   Effect.gen(function* () {
-    const { record } = yield* httpCallAccess;
+    const { record, token } = yield* httpCallAccess;
+    const settings = yield* PaymentConfig;
     const mongo = yield* MongoClient;
     const call = yield* Effect.tryPromise(() =>
       mongo.calls.findOne({ room: record.room }),
@@ -88,6 +90,7 @@ export const callSnapshot = callResponse(
     return yield* json({
       call_id: record._id,
       status: record.status,
+      dashboard_url: callDashboardUrl(record, token, settings.publicWebUrl),
       room: record.dialedAt ? record.room : null,
       error: record.error ?? null,
       to: record.to,

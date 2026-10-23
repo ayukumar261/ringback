@@ -1,5 +1,5 @@
 import { expect, test } from "./support/fixtures"
-import { recordingSeconds, tokens } from "./support/mock-api"
+import { mockApi, recordingSeconds, tokens } from "./support/mock-api"
 import { web } from "./support/servers"
 
 // Browser tests exercise real cookies and navigation against a controlled API.
@@ -42,6 +42,7 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   page,
   context,
   api,
+  browser,
 }) => {
   await page.goto(`/call/a#token=${tokens.a}`)
   await expect(page.getByText("Private task for a")).toBeVisible()
@@ -68,6 +69,9 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
     await page.evaluate(() => JSON.stringify({ ...localStorage }))
   ).not.toContain(tokens.a)
   expect(api.requests.every(({ url }) => !url.includes(tokens.a))).toBe(true)
+  await expect(
+    page.getByRole("region", { name: "Payment confirmed" })
+  ).toHaveCount(0)
   await page.reload()
   await expect(page.getByText("Private task for a")).toBeVisible()
   await page.getByRole("link", { name: "Continue to payment" }).click()
@@ -75,6 +79,25 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   await expect(page.getByLabel("Call details")).toContainText(
     '"status": "paid"'
   )
+  const confirmation = page.getByRole("region", { name: "Payment confirmed" })
+  await expect(confirmation).toContainText(
+    "Send the user their dashboard URL now"
+  )
+  const shareUrl = `${web.url}/call/a#token=${tokens.a}`
+  await expect(confirmation.getByRole("link")).toHaveAttribute("href", shareUrl)
+  await expect(confirmation.getByRole("link")).toHaveText(shareUrl)
+
+  const userContext = await browser.newContext()
+  try {
+    const userApi = await mockApi(userContext)
+    userApi.stage = "paid"
+    const userPage = await userContext.newPage()
+    await userPage.goto(shareUrl)
+    await expect(userPage.getByText("Private task for a")).toBeVisible()
+    await expect(userPage).toHaveURL("/call/a")
+  } finally {
+    await userContext.close()
+  }
 })
 
 test("anonymous pages and wrong links reveal no private details", async ({
