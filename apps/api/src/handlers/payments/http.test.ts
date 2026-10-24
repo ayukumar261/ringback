@@ -147,11 +147,6 @@ describe("payment HTTP boundary", () => {
     [new PaymentError({ code: "unauthorized" }), 401, "unauthorized"],
     [new PaymentError({ code: "not_found" }), 404, "not_found"],
     [new PaymentError({ code: "conflict" }), 409, "conflict"],
-    [
-      new PaymentError({ code: "prompt_not_allowed" }),
-      422,
-      "prompt_not_allowed",
-    ],
     [new StripeError({ code: "unavailable" }), 503, "unavailable"],
     [new LiveKitError({ code: "unavailable" }), 503, "unavailable"],
     [new Error("private credentials"), 500, "internal"],
@@ -203,7 +198,6 @@ describe("checkout", () => {
         version: "2026-10-30",
         url: "https://example.com/privacy-policy/2026-10-30",
       },
-      policyVersion: "prompt-rules-v1",
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 35 * 60_000),
       status: "unpaid",
@@ -954,13 +948,15 @@ describe("checkout", () => {
         expect(h.createSession).toHaveBeenCalledTimes(1);
       },
     );
-    it("rejects prohibited prompts before storing a request or contacting providers", async () => {
-      await expect(
-        h.run(createCallRequest({ ...input, prompt: "Make a prank call" })),
-      ).rejects.toThrow("prompt_not_allowed");
-      expect(await mongo.requests.countDocuments()).toBe(0);
-      expect(h.ready).not.toHaveBeenCalled();
-      expect(h.createSession).not.toHaveBeenCalled();
+    it("creates Checkout without screening prompt content", async () => {
+      const prompt = "Ask the clinic how to report harassment.";
+      const result = await h.run(createCallRequest({ ...input, prompt }));
+      expect(result.status).toBe("unpaid");
+      expect(
+        (await mongo.requests.findOne({ _id: result.call_id }))?.prompt,
+      ).toBe(prompt);
+      expect(h.createSession).toHaveBeenCalledTimes(1);
+      expect(h.dial).not.toHaveBeenCalled();
     });
     it("keeps request, recovery, and access secrets out of failure logs", async () => {
       const result = await h.run(

@@ -67,7 +67,6 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       version: "2026-10-30",
       url: "https://example.com/privacy-policy/2026-10-30",
     },
-    policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
     status: "unpaid",

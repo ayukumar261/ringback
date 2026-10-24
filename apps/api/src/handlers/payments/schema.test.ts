@@ -11,7 +11,6 @@ const snapshot = {
   amount: 50,
   currency: "usd",
   maxDuration: 120,
-  policyVersion: "prompt-rules-v1",
   terms: {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
@@ -45,16 +44,14 @@ describe("call input", () => {
       "invalid_request",
     );
   });
-  it.each([
-    "Make a prank call",
-    "Start a cold-call",
-    "Impersonate the owner",
-    "Send a bomb threat",
-    "Try swatting",
-  ])("rejects prohibited prompts: %s", async (prompt) => {
-    await expect(
-      Effect.runPromise(checkCallInput({ ...input, prompt })),
-    ).rejects.toThrow("prompt_not_allowed");
+  it("does not screen prompt content", async () => {
+    const prompt = "Ask the clinic how to report harassment.";
+    expect(
+      await Effect.runPromise(checkCallInput({ ...input, prompt })),
+    ).toEqual({
+      ...input,
+      prompt,
+    });
   });
   it("accepts the maximum prompt length", async () => {
     expect(
@@ -74,7 +71,6 @@ describe("request snapshot", () => {
     { amount: 100 },
     { currency: "eur" },
     { maxDuration: 240 },
-    { policyVersion: "v2" },
     { environment: "development" as const },
   ])("binds each purchase term %j", (change) => {
     expect(requestSnapshotHash({ ...snapshot, ...change })).not.toBe(

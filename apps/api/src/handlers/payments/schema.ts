@@ -3,9 +3,6 @@ import { Effect, Schema } from "effect";
 import type { RequestDoc } from "../../clients/mongo.js";
 import { PaymentError } from "./errors.js";
 
-// POLICY_VERSION names the prompt rules a request was checked against.
-export const POLICY_VERSION = "prompt-rules-v1";
-
 // TERMS_VERSION matches the preserved public Terms edition used by new checkouts.
 export const TERMS_VERSION = "2026-10-30";
 
@@ -25,19 +22,10 @@ export const CallInput = Schema.Struct({
   ),
 });
 
-// prohibited is a keyword check, not real prompt moderation.
-const prohibited =
-  /\b(?:prank\s+call|cold[- ]call|robocall|harass(?:ment|ing)?|impersonat\w*|bomb\s+threat|swatting)\b/i;
-
-// checkCallInput validates a POST /call body and turns away prohibited prompts.
+// checkCallInput validates the shape, destination format, and prompt length.
 export const checkCallInput = (input: unknown) =>
   Schema.decodeUnknown(CallInput)(input).pipe(
     Effect.mapError(() => new PaymentError({ code: "invalid_request" })),
-    Effect.flatMap((body) =>
-      prohibited.test(body.prompt)
-        ? Effect.fail(new PaymentError({ code: "prompt_not_allowed" }))
-        : Effect.succeed(body),
-    ),
   );
 
 // hash fingerprints any JSON value.
@@ -53,7 +41,6 @@ export const requestSnapshotHash = (
     | "amount"
     | "currency"
     | "maxDuration"
-    | "policyVersion"
     | "terms"
     | "privacy"
     | "environment"
@@ -65,7 +52,6 @@ export const requestSnapshotHash = (
     r.amount,
     r.currency,
     r.maxDuration,
-    r.policyVersion,
     r.environment,
     r.terms.version,
     r.terms.url,

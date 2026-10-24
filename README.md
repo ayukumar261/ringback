@@ -232,7 +232,7 @@ The local API base URL is `http://localhost:3001`. The checked-in Caddy configur
 | `GET`  | `/call/:id/events`   | Authorized live and replayed events for this call |
 | `POST` | `/webhooks/stripe`   | Signed Stripe payment events                                     |
 
-Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `unauthorized`, `not_found`, `conflict`, `prompt_not_allowed`, `unavailable`, or `internal`.
+Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `unauthorized`, `not_found`, `conflict`, `unavailable`, or `internal`.
 
 ### Place a call
 
@@ -261,7 +261,7 @@ curl -X POST http://localhost:3001/call \
   }'
 ```
 
-The destination must use E.164 format. The prompt must contain 1–16,000 characters after trimming, and prompts asking for prank calls, harassment, impersonation, robocalls, or threats are refused. A successful request returns `201`:
+The destination must use E.164 format. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
 
 ```json
 {

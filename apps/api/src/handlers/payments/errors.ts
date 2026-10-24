@@ -9,7 +9,6 @@ export class PaymentError extends Data.TaggedError("PaymentError")<{
     | "unauthorized"
     | "not_found"
     | "conflict"
-    | "prompt_not_allowed"
     | "unavailable";
 }> {
   override get message() {

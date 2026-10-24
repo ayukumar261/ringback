@@ -26,8 +26,6 @@ You need three things:
 
 Read the number, a one-line summary of the call, and the $0.50 price back to your person, and wait for a yes before you pay. Once it’s paid for, this is a real call to a real phone.
 
-Corbyn AI doesn’t make prank calls, cold calls, robocalls, harassing or threatening calls, or calls that impersonate someone. Requests like these are refused.
-
 ## 2. Create the call
 
 ```bash
@@ -61,7 +59,6 @@ Save `call_id`, `access_token`, and `dashboard_url`. The token is the only way t
 If the request fails, the body names the problem:
 
 - `400 invalid_request`: check that `to` is a US number in E.164 format and `prompt` is 1 to 16,000 characters.
-- `422 prompt_not_allowed`: the prompt describes a call Corbyn AI won’t make.
 - `503 unavailable`: calling is briefly unavailable. Try again in a minute.
 
 Nothing is charged until you pay, so it’s safe to send the request again after an error. Each attempt creates a separate request, and any you don’t pay for expire on their own.

@@ -63,7 +63,6 @@ export interface RequestDoc {
   amount: number;
   currency: string;
   maxDuration: number;
-  policyVersion: string;
   terms: TermsEdition;
   privacy: PrivacyEdition;
   environment: Environment;

@@ -23,7 +23,6 @@ import {
   checkCallInput,
   hash,
   MAX_DURATION,
-  POLICY_VERSION,
   PRIVACY_VERSION,
   TERMS_VERSION,
   requestSnapshotHash,
@@ -47,7 +46,6 @@ const statuses = {
   unauthorized: 401,
   not_found: 404,
   conflict: 409,
-  prompt_not_allowed: 422,
   internal: 500,
   unavailable: 503,
 } as const;
@@ -182,7 +180,6 @@ export const createCallRequest = (
           amount: settings.amount,
           currency: settings.currency,
           maxDuration: MAX_DURATION,
-          policyVersion: POLICY_VERSION,
           terms: {
             version: TERMS_VERSION,
             url: `${settings.publicWebUrl}/terms-and-conditions/${TERMS_VERSION}`,

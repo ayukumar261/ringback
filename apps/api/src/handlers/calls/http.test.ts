@@ -41,7 +41,6 @@ const fixture = (id: string, token: string): RequestDoc => ({
   amount: 50,
   currency: "usd",
   maxDuration: 1800,
-  policyVersion: "v1",
   terms: {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",

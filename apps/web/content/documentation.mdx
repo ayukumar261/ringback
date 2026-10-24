@@ -287,7 +287,6 @@ Errors return a JSON body with a code:
 - `401 unauthorized`: a request to read a call has no token, or the `Authorization` header is malformed.
 - `404 not_found`: the call doesn’t exist, or the token is wrong, expired, or revoked.
 - `409 conflict`: a retry didn’t match the original request or credentials.
-- `422 prompt_not_allowed`: the prompt asks for a call Corbyn AI won’t make, such as a prank call, cold call, robocall, harassment, impersonation, or a threat.
 - `500 internal`: something went wrong on Corbyn AI’s side.
 - `503 unavailable`: calling is briefly unavailable. Try again in a minute.
 
