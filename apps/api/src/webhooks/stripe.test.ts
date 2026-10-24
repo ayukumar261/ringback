@@ -60,6 +60,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       version: "2026-10-30",
       url: "https://example.com/terms-and-conditions/2026-10-30",
     },
+    privacy: {
+      version: "2026-10-30",
+      url: "https://example.com/privacy-policy/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -95,6 +99,8 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
       request_snapshot_hash: requestFixture().requestSnapshotHash,
       terms_version: requestFixture().terms.version,
       terms_url: requestFixture().terms.url,
+      privacy_version: requestFixture().privacy.version,
+      privacy_url: requestFixture().privacy.url,
     },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
@@ -167,6 +173,8 @@ const harness = (
         request_snapshot_hash: record.requestSnapshotHash,
         terms_version: record.terms.version,
         terms_url: record.terms.url,
+        privacy_version: record.privacy.version,
+        privacy_url: record.privacy.url,
       },
     });
     return { result: { call_id: record._id }, session };
@@ -574,6 +582,58 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     await h.mongo.requests.updateOne(
       { _id: session.client_reference_id! },
       { $set: { "terms.version": "2026-11-01" } },
+    );
+    await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
+      "conflict",
+    );
+    expect(await h.mongo.purchases.countDocuments()).toBe(0);
+  });
+  it("records the request's Privacy Policy edition and keeps it on duplicate webhooks", async () => {
+    // An earlier edition than PRIVACY_VERSION, so the purchase can't be reading the current one.
+    const privacy = {
+      version: "2026-09-30",
+      url: "https://example.com/privacy-policy/2026-09-30",
+    };
+    const { session } = await h.checkout({ privacy });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
+    await h.run(handleStripeEvent(event(session)));
+    const purchase = await h.mongo.purchases.findOne({});
+    expect(purchase?.privacy).toEqual(privacy);
+    expect(purchase?.recordedAt).toBeInstanceOf(Date);
+    for (const type of [
+      "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+    ])
+      await h.run(handleStripeEvent(event(session, type)));
+    expect(await h.mongo.purchases.countDocuments()).toBe(1);
+    expect(await h.mongo.purchases.findOne({})).toEqual(purchase);
+    expect((await h.mongo.requests.findOne({}))?.purchaseId).toBe(
+      purchase?._id,
+    );
+  });
+  it.each(["privacy_version", "privacy_url"] as const)(
+    "rejects a paid Checkout whose metadata has a different %s",
+    async (field) => {
+      const { session } = await h.checkout();
+      Object.assign(session, { status: "complete", payment_status: "paid" });
+      session.metadata![field] = "wrong";
+      await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
+        "conflict",
+      );
+      expect(await h.mongo.purchases.countDocuments()).toBe(0);
+      expect((await h.mongo.requests.findOne({}))?.status).toBe("unpaid");
+    },
+  );
+  it("rejects a Privacy Policy edition changed after Checkout was created", async () => {
+    const { session } = await h.checkout();
+    Object.assign(session, { status: "complete", payment_status: "paid" });
+    await h.mongo.requests.updateOne(
+      { _id: session.client_reference_id! },
+      {
+        $set: {
+          "privacy.url": "https://example.com/privacy-policy/2026-11-01",
+        },
+      },
     );
     await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
       "conflict",

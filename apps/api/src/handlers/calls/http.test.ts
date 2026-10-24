@@ -46,6 +46,10 @@ const fixture = (id: string, token: string): RequestDoc => ({
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
   },
+  privacy: {
+    version: "2026-10-30",
+    url: "https://example.com/privacy-policy/2026-10-30",
+  },
   environment: "production",
   createdAt: new Date(),
   expiresAt: new Date(Date.now() + 35 * 60_000),

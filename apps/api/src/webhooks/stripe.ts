@@ -81,7 +81,7 @@ export const handleStripeEvent = (event: Stripe.Event) =>
       const purchase = yield* recordPaidCheckout(
         mongo.purchases,
         verified,
-        record.terms,
+        record,
       );
       // the purchase and the queue are separate writes, so retrying after either one is safe
       yield* Effect.tryPromise(() =>

@@ -48,6 +48,7 @@ import {
 import {
   hash,
   MAX_DURATION,
+  PRIVACY_VERSION,
   requestSnapshotHash,
   TERMS_VERSION,
 } from "./schema.js";
@@ -198,6 +199,10 @@ describe("checkout", () => {
         version: "2026-10-30",
         url: "https://example.com/terms-and-conditions/2026-10-30",
       },
+      privacy: {
+        version: "2026-10-30",
+        url: "https://example.com/privacy-policy/2026-10-30",
+      },
       policyVersion: "prompt-rules-v1",
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -232,6 +237,8 @@ describe("checkout", () => {
         request_snapshot_hash: requestFixture().requestSnapshotHash,
         terms_version: requestFixture().terms.version,
         terms_url: requestFixture().terms.url,
+        privacy_version: requestFixture().privacy.version,
+        privacy_url: requestFixture().privacy.url,
       },
       url: "https://checkout.stripe.com/test",
       customer: "cus_test",
@@ -274,6 +281,8 @@ describe("checkout", () => {
               request_snapshot_hash: request.requestSnapshotHash,
               terms_version: request.terms.version,
               terms_url: request.terms.url,
+              privacy_version: request.privacy.version,
+              privacy_url: request.privacy.url,
             },
             url: `https://checkout.stripe.com/test/${id}`,
           }),
@@ -457,6 +466,10 @@ describe("checkout", () => {
             dashboard_url: "https://untrusted.example",
             returnUrl: "https://untrusted.example",
             terms: { version: "fake", url: "https://untrusted.example/terms" },
+            privacy: {
+              version: "fake",
+              url: "https://untrusted.example/privacy",
+            },
           }),
         ),
       );
@@ -474,10 +487,17 @@ describe("checkout", () => {
         version: TERMS_VERSION,
         url: `https://example.com/terms-and-conditions/${TERMS_VERSION}`,
       };
-      expect(h.createSession.mock.calls[0]![0].terms).toEqual(terms);
+      const privacy = {
+        version: PRIVACY_VERSION,
+        url: `https://example.com/privacy-policy/${PRIVACY_VERSION}`,
+      };
+      expect(h.createSession.mock.calls[0]![0]).toMatchObject({
+        terms,
+        privacy,
+      });
       expect(
-        (await h.mongo.requests.findOne({ _id: result.call_id }))?.terms,
-      ).toEqual(terms);
+        await h.mongo.requests.findOne({ _id: result.call_id }),
+      ).toMatchObject({ terms, privacy });
       expect(
         (await h.mongo.requests.findOne({ _id: result.call_id }))?.dashboardUrl,
       ).toBe(`https://example.com/call/${result.call_id}`);
@@ -542,6 +562,32 @@ describe("checkout", () => {
         (await h.mongo.requests.findOne({ _id: record._id }))?.terms,
       ).toEqual(terms);
     });
+    it("retries a request using its original Privacy Policy edition after a policy update", async () => {
+      const privacy = {
+        version: "2026-09-30",
+        url: "https://example.com/privacy-policy/2026-09-30",
+      };
+      const record = requestFixture({
+        privacy,
+        retry: {
+          keyHash: hash(["call", settings.environment, "earlier-privacy"]),
+        },
+      });
+      delete record.checkout;
+      await h.mongo.requests.insertOne(record);
+      const result = await h.run(
+        createCallRequest(input, "earlier-privacy", { accessToken }),
+      );
+      expect(result.call_id).toBe(record._id);
+      expect(h.createSession.mock.calls[0]![0]).toMatchObject({ privacy });
+      expect(h.sessions.get(`cs_${record._id}`)?.metadata).toMatchObject({
+        privacy_version: privacy.version,
+        privacy_url: privacy.url,
+      });
+      const stored = await h.mongo.requests.findOne({ _id: record._id });
+      expect(stored?.privacy).toEqual(privacy);
+      expect(stored?.checkout?.id).toBe(`cs_${record._id}`);
+    });
     it("makes distinct requests when no idempotency key is supplied", async () => {
       const a = await h.run(createCallRequest(input));
       const b = await h.run(createCallRequest(input));
@@ -567,6 +613,10 @@ describe("checkout", () => {
         terms: {
           version: TERMS_VERSION,
           url: `http://localhost:3000/terms-and-conditions/${TERMS_VERSION}`,
+        },
+        privacy: {
+          version: PRIVACY_VERSION,
+          url: `http://localhost:3000/privacy-policy/${PRIVACY_VERSION}`,
         },
       });
       expect(result.dashboard_url).toBe(
@@ -603,6 +653,32 @@ describe("checkout", () => {
       ).rejects.toThrow("conflict");
       expect((await h.mongo.requests.findOne({}))?.checkout).toBeUndefined();
     });
+    it.each(["privacy_version", "privacy_url"] as const)(
+      "rejects a Checkout Session with a different %s without binding it",
+      async (field) => {
+        h.createSession.mockImplementationOnce(async (r) => ({
+          accountId: "acct_test",
+          session: sessionFixture({
+            id: `cs_wrong_${field}`,
+            status: "open",
+            payment_status: "unpaid",
+            client_reference_id: r.requestId,
+            metadata: {
+              request_snapshot_hash: r.requestSnapshotHash,
+              terms_version: r.terms.version,
+              terms_url: r.terms.url,
+              privacy_version: r.privacy.version,
+              privacy_url: r.privacy.url,
+              [field]: "wrong",
+            },
+          }),
+        }));
+        await expect(
+          h.run(createCallRequest(input, field, creationCredentials)),
+        ).rejects.toThrow("conflict");
+        expect((await h.mongo.requests.findOne({}))?.checkout).toBeUndefined();
+      },
+    );
     it("uses Sandbox checkout in development and scopes retries by environment", async () => {
       h.createSession.mockImplementationOnce(async (r) => ({
         accountId: "acct_sandbox",
@@ -614,6 +690,8 @@ describe("checkout", () => {
             request_snapshot_hash: r.requestSnapshotHash,
             terms_version: r.terms.version,
             terms_url: r.terms.url,
+            privacy_version: r.privacy.version,
+            privacy_url: r.privacy.url,
           },
         }),
       }));
@@ -655,6 +733,8 @@ describe("checkout", () => {
               request_snapshot_hash: r.requestSnapshotHash,
               terms_version: r.terms.version,
               terms_url: r.terms.url,
+              privacy_version: r.privacy.version,
+              privacy_url: r.privacy.url,
             },
             livemode: environment !== "production",
           }),
@@ -851,6 +931,29 @@ describe("checkout", () => {
       ).rejects.toThrow("conflict");
       expect(h.createSession).toHaveBeenCalledTimes(1);
     });
+    it.each(["privacy.version", "privacy.url"])(
+      "rejects a request whose %s changed after creation",
+      async (field) => {
+        const result = await h.run(
+          createCallRequest(input, field, creationCredentials),
+        );
+        await mongo.requests.updateOne(
+          { _id: result.call_id },
+          { $set: { [field]: "changed" } },
+        );
+        await expect(
+          h.run(createCallRequest(input, field, creationCredentials)),
+        ).rejects.toThrow("conflict");
+        await mongo.requests.updateOne(
+          { _id: result.call_id },
+          { $unset: { checkout: "" } },
+        );
+        await expect(
+          h.run(createCallRequest(input, field, creationCredentials)),
+        ).rejects.toThrow("conflict");
+        expect(h.createSession).toHaveBeenCalledTimes(1);
+      },
+    );
     it("rejects prohibited prompts before storing a request or contacting providers", async () => {
       await expect(
         h.run(createCallRequest({ ...input, prompt: "Make a prank call" })),
@@ -888,9 +991,15 @@ describe("checkout", () => {
 
 describe("purchases", () => {
   const mongoUri = process.env.MONGODB_URI;
-  const terms = {
-    version: "2026-10-30",
-    url: "https://example.com/terms-and-conditions/2026-10-30",
+  const policies = {
+    terms: {
+      version: "2026-10-30",
+      url: "https://example.com/terms-and-conditions/2026-10-30",
+    },
+    privacy: {
+      version: "2026-10-30",
+      url: "https://example.com/privacy-policy/2026-10-30",
+    },
   };
   const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     ({
@@ -906,8 +1015,10 @@ describe("purchases", () => {
       currency: "usd",
       metadata: {
         request_snapshot_hash: "test-snapshot",
-        terms_version: terms.version,
-        terms_url: terms.url,
+        terms_version: policies.terms.version,
+        terms_url: policies.terms.url,
+        privacy_version: policies.privacy.version,
+        privacy_url: policies.privacy.url,
       },
       url: "https://checkout.stripe.com/test",
       customer: "cus_test",
@@ -935,7 +1046,7 @@ describe("purchases", () => {
           recordPaidCheckout(
             mongo.purchases as unknown as Collection<PurchaseDoc>,
             { accountId: "acct_test", session: sessionFixture(change) },
-            terms,
+            policies,
           ),
         ),
       ).rejects.toThrow("invalid_request");
@@ -956,12 +1067,30 @@ describe("purchases", () => {
           recordPaidCheckout(
             mongo.purchases as unknown as Collection<PurchaseDoc>,
             { accountId: "acct_test", session },
-            terms,
+            policies,
           ),
         ),
       ).rejects.toThrow("invalid_request");
       expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
     });
+    it.each(["privacy_version", "privacy_url"] as const)(
+      "rejects Checkout metadata with a different %s",
+      async (field) => {
+        const mongo = fakeMongo();
+        const session = sessionFixture();
+        session.metadata![field] = "wrong";
+        await expect(
+          Effect.runPromise(
+            recordPaidCheckout(
+              mongo.purchases as unknown as Collection<PurchaseDoc>,
+              { accountId: "acct_test", session },
+              policies,
+            ),
+          ),
+        ).rejects.toThrow("conflict");
+        expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
+      },
+    );
     it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
       "rejects invalid amounts: %s",
       async (amount_total) => {
@@ -973,7 +1102,7 @@ describe("purchases", () => {
                 accountId: "acct_test",
                 session: sessionFixture({ amount_total }),
               },
-              terms,
+              policies,
             ),
           ),
         ).rejects.toThrow("invalid_request");
@@ -1005,7 +1134,7 @@ describe("purchases", () => {
     });
     const record = (session = sessionFixture(), accountId = "acct_test") =>
       Effect.runPromise(
-        recordPaidCheckout(mongo.purchases, { accountId, session }, terms),
+        recordPaidCheckout(mongo.purchases, { accountId, session }, policies),
       );
     it("stores only the purchase snapshot, including customer contact details", async () => {
       const purchase = await record();
@@ -1025,7 +1154,7 @@ describe("purchases", () => {
         amountTotal: 50,
         currency: "usd",
         recordedAt: expect.any(Date),
-        terms,
+        ...policies,
       });
     });
     it("deduplicates concurrent writes and preserves the first snapshot", async () => {

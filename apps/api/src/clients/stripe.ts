@@ -1,7 +1,7 @@
 import { Config, Data, Effect, Redacted } from "effect";
 import Stripe from "stripe";
 import { environmentConfig, type Environment } from "../environment.js";
-import type { TermsPolicy } from "./mongo.js";
+import type { PrivacyEdition, TermsEdition } from "./mongo.js";
 
 // Corbyn's consumer flow sells cloud-hosted AI services for personal use.
 const DEFAULT_PRODUCT_TAX_CODE = "txcd_10105001";
@@ -25,7 +25,8 @@ export interface CheckoutInput {
   maxDuration: number;
   expiresAt: Date;
   returnUrl: string;
-  terms: TermsPolicy;
+  terms: TermsEdition;
+  privacy: PrivacyEdition;
 }
 
 // CheckoutSession is a Checkout session plus the Stripe account that owns it.
@@ -105,6 +106,8 @@ export const makeStripeClient = (
                   request_snapshot_hash: input.requestSnapshotHash,
                   terms_version: input.terms.version,
                   terms_url: input.terms.url,
+                  privacy_version: input.privacy.version,
+                  privacy_url: input.privacy.url,
                 },
                 line_items: [
                   {

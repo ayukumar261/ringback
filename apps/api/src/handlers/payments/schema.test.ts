@@ -16,6 +16,10 @@ const snapshot = {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
   },
+  privacy: {
+    version: "2026-10-30",
+    url: "https://example.com/privacy-policy/2026-10-30",
+  },
   environment: "production" as const,
 };
 
@@ -94,6 +98,25 @@ describe("request snapshot", () => {
       requestSnapshotHash({
         ...snapshot,
         terms: { ...terms, url: "https://untrusted.example/terms" },
+      }),
+    );
+  });
+  it("binds the Privacy Policy edition and its URL", () => {
+    const privacy = {
+      version: "2026-10-30",
+      url: "https://example.com/privacy-policy/2026-10-30",
+    };
+    const bound = requestSnapshotHash({ ...snapshot, privacy });
+    expect(bound).not.toBe(
+      requestSnapshotHash({
+        ...snapshot,
+        privacy: { ...privacy, version: "v2" },
+      }),
+    );
+    expect(bound).not.toBe(
+      requestSnapshotHash({
+        ...snapshot,
+        privacy: { ...privacy, url: "https://untrusted.example/privacy" },
       }),
     );
   });

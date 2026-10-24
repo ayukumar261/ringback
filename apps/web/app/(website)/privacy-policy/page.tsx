@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import PrivacyPolicy from "@/content/privacy-policy.mdx"
+import PrivacyPolicy from "@/content/privacy-policy/2026-10-30.mdx"
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Corbyn AI",

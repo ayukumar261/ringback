@@ -34,6 +34,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       version: "2026-10-30",
       url: "https://example.com/terms-and-conditions/2026-10-30",
     },
+    privacy: {
+      version: "2026-10-30",
+      url: "https://example.com/privacy-policy/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     access: newCallAccess(newAccessToken(), new Date()),
     dashboardUrl: `${settings.publicWebUrl}/call/${changes._id ?? "request-test"}`,
@@ -65,6 +69,10 @@ const purchaseFixture = (changes: Partial<PurchaseDoc> = {}): PurchaseDoc => ({
   terms: {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
+  privacy: {
+    version: "2026-10-30",
+    url: "https://example.com/privacy-policy/2026-10-30",
   },
   ...changes,
 });

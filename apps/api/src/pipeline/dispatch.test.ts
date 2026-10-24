@@ -63,6 +63,10 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       version: "2026-10-30",
       url: "https://example.com/terms-and-conditions/2026-10-30",
     },
+    privacy: {
+      version: "2026-10-30",
+      url: "https://example.com/privacy-policy/2026-10-30",
+    },
     policyVersion: "prompt-rules-v1",
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
@@ -98,6 +102,8 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
       request_snapshot_hash: requestFixture().requestSnapshotHash,
       terms_version: requestFixture().terms.version,
       terms_url: requestFixture().terms.url,
+      privacy_version: requestFixture().privacy.version,
+      privacy_url: requestFixture().privacy.url,
     },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
@@ -123,6 +129,10 @@ const purchaseFixture = (changes: Partial<PurchaseDoc> = {}): PurchaseDoc => ({
   terms: {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
+  },
+  privacy: {
+    version: "2026-10-30",
+    url: "https://example.com/privacy-policy/2026-10-30",
   },
   ...changes,
 });
@@ -339,6 +349,8 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
           request_snapshot_hash: record.requestSnapshotHash,
           terms_version: record.terms.version,
           terms_url: record.terms.url,
+          privacy_version: record.privacy.version,
+          privacy_url: record.privacy.url,
         },
       });
       return { result: { call_id: record._id }, session };

@@ -23,6 +23,10 @@ const input: CheckoutInput = {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
   },
+  privacy: {
+    version: "2026-10-30",
+    url: "https://example.com/privacy-policy/2026-10-30",
+  },
 };
 const sdk = () => {
   const create = vi.fn(
@@ -60,6 +64,8 @@ describe("Stripe client", () => {
           request_snapshot_hash: "hash",
           terms_version: input.terms.version,
           terms_url: input.terms.url,
+          privacy_version: input.privacy.version,
+          privacy_url: input.privacy.url,
         },
         expires_at: Math.floor(input.expiresAt.getTime() / 1000),
         success_url: "https://example.com/call/request-test",

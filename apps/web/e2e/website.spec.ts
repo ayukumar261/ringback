@@ -31,3 +31,27 @@ test("Checkout's dated Terms URL preserves the published edition", async ({
     "Effective date: October 30, 2026"
   )
 })
+
+test("Checkout's dated Privacy Policy URL preserves the published edition", async ({
+  page,
+}) => {
+  await page.goto("/privacy-policy")
+  await expect(
+    page.getByRole("heading", {
+      name: "Corbyn AI Privacy Policy",
+      exact: true,
+    })
+  ).toBeVisible()
+  const current = await page.locator("article").innerText()
+  await page.goto("/privacy-policy/2026-10-30")
+  await expect(
+    page.getByRole("heading", {
+      name: "Corbyn AI Privacy Policy",
+      exact: true,
+    })
+  ).toBeVisible()
+  expect(await page.locator("article").innerText()).toBe(current)
+  await expect(page.locator("article")).toContainText(
+    "Effective date: October 30, 2026"
+  )
+})

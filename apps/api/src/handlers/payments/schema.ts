@@ -9,6 +9,9 @@ export const POLICY_VERSION = "prompt-rules-v1";
 // TERMS_VERSION matches the preserved public Terms edition used by new checkouts.
 export const TERMS_VERSION = "2026-10-30";
 
+// PRIVACY_VERSION matches the preserved public Privacy Policy edition used by new checkouts.
+export const PRIVACY_VERSION = "2026-10-30";
+
 // MAX_DURATION caps every call at 30 minutes.
 export const MAX_DURATION = 30 * 60;
 
@@ -52,6 +55,7 @@ export const requestSnapshotHash = (
     | "maxDuration"
     | "policyVersion"
     | "terms"
+    | "privacy"
     | "environment"
   >,
 ) =>
@@ -65,4 +69,6 @@ export const requestSnapshotHash = (
     r.environment,
     r.terms.version,
     r.terms.url,
+    r.privacy.version,
+    r.privacy.url,
   ]);

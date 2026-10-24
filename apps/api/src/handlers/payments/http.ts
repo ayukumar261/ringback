@@ -11,7 +11,6 @@ import {
   MongoClient,
   type PurchaseDoc,
   type RequestDoc,
-  type TermsPolicy,
 } from "../../clients/mongo.js";
 import {
   StripeClient,
@@ -25,6 +24,7 @@ import {
   hash,
   MAX_DURATION,
   POLICY_VERSION,
+  PRIVACY_VERSION,
   TERMS_VERSION,
   requestSnapshotHash,
 } from "./schema.js";
@@ -187,6 +187,10 @@ export const createCallRequest = (
             version: TERMS_VERSION,
             url: `${settings.publicWebUrl}/terms-and-conditions/${TERMS_VERSION}`,
           },
+          privacy: {
+            version: PRIVACY_VERSION,
+            url: `${settings.publicWebUrl}/privacy-policy/${PRIVACY_VERSION}`,
+          },
           environment,
         };
         const fresh: RequestDoc = {
@@ -244,6 +248,7 @@ export const createCallRequest = (
         expiresAt: record.expiresAt,
         returnUrl: record.dashboardUrl,
         terms: record.terms,
+        privacy: record.privacy,
       });
       if (
         !accountId ||
@@ -255,6 +260,8 @@ export const createCallRequest = (
         session.metadata?.request_snapshot_hash !== digest ||
         session.metadata?.terms_version !== record.terms.version ||
         session.metadata?.terms_url !== record.terms.url ||
+        session.metadata?.privacy_version !== record.privacy.version ||
+        session.metadata?.privacy_url !== record.privacy.url ||
         session.livemode !== (environment === "production")
       )
         return yield* new PaymentError({ code: "conflict" });
@@ -321,7 +328,7 @@ export const createCall = paymentResponse(
 export const recordPaidCheckout = (
   purchases: Collection<PurchaseDoc>,
   { accountId, session }: CheckoutSession,
-  terms: TermsPolicy,
+  { terms, privacy }: Pick<RequestDoc, "terms" | "privacy">,
 ) =>
   Effect.gen(function* () {
     if (
@@ -353,7 +360,9 @@ export const recordPaidCheckout = (
       return yield* new PaymentError({ code: "invalid_request" });
     if (
       session.metadata?.terms_version !== terms.version ||
-      session.metadata?.terms_url !== terms.url
+      session.metadata?.terms_url !== terms.url ||
+      session.metadata?.privacy_version !== privacy.version ||
+      session.metadata?.privacy_url !== privacy.url
     )
       return yield* new PaymentError({ code: "conflict" });
     const purchase: PurchaseDoc = {
@@ -373,6 +382,7 @@ export const recordPaidCheckout = (
       currency: session.currency,
       recordedAt: new Date(),
       terms,
+      privacy,
     };
     const stored = yield* Effect.tryPromise({
       try: () =>

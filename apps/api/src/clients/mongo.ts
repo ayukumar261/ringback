@@ -2,8 +2,14 @@ import { Config, Effect } from "effect";
 import { MongoClient as MongoDriver, type Collection } from "mongodb";
 import type { Environment } from "../environment.js";
 
-// TermsPolicy identifies a preserved edition of the purchase terms.
-export interface TermsPolicy {
+// TermsEdition identifies a preserved, dated edition of the Terms and Conditions.
+export interface TermsEdition {
+  version: string;
+  url: string;
+}
+
+// PrivacyEdition identifies a preserved, dated edition of the Privacy Policy.
+export interface PrivacyEdition {
   version: string;
   url: string;
 }
@@ -26,7 +32,9 @@ export interface PurchaseDoc {
   currency: string;
   recordedAt: Date;
   // Stripe confirmed acceptance of this specific edition.
-  terms: TermsPolicy;
+  terms: TermsEdition;
+  // The Privacy Policy edition in effect for this purchase; not a consent record.
+  privacy: PrivacyEdition;
 }
 
 // createPurchaseIndexes records each session once and finds purchases by request or customer.
@@ -56,7 +64,8 @@ export interface RequestDoc {
   currency: string;
   maxDuration: number;
   policyVersion: string;
-  terms: TermsPolicy;
+  terms: TermsEdition;
+  privacy: PrivacyEdition;
   environment: Environment;
   createdAt: Date;
   expiresAt: Date;
