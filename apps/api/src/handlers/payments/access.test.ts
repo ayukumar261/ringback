@@ -34,19 +34,15 @@ describe("call access", () => {
     expect(JSON.stringify(grant)).not.toContain(first);
   });
   it.each([
-    undefined,
     {
       ...newCallAccess(token, new Date()),
       expiresAt: new Date(Date.now() - 1),
     },
     { ...newCallAccess(token, new Date()), revokedAt: new Date() },
     { ...newCallAccess(token, new Date()), tokenHash: "malformed" },
-  ])(
-    "fails closed for absent, expired, revoked, or corrupt grants",
-    (access) => {
-      expect(hasCallAccess(record({ access }), token)).toBe(false);
-    },
-  );
+  ])("fails closed for expired, revoked, or corrupt grants", (access) => {
+    expect(hasCallAccess(record({ access }), token)).toBe(false);
+  });
   it("does not authorize an absent, wrong, or noncanonical secret", () => {
     for (const secret of [undefined, newAccessToken(), "x", token + "="]) {
       expect(hasCallAccess(record(), secret)).toBe(false);

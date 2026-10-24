@@ -60,7 +60,7 @@ export interface RequestDoc {
   environment: Environment;
   createdAt: Date;
   expiresAt: Date;
-  access?: {
+  access: {
     tokenHash: string;
     expiresAt: Date;
     revokedAt?: Date;
@@ -71,9 +71,7 @@ export interface RequestDoc {
     // The salt is public; recreating a token also requires the caller's recovery secret.
     recovery?: { secretHash: string; salt: string };
   };
-  dashboardUrl?: string;
-  // Legacy records keep their original, secret-free Stripe return URL.
-  callUrl?: string;
+  dashboardUrl: string;
   status: "unpaid" | "paid" | "dialing" | "dialed" | "expired" | "failed";
   room: string;
   checkout?: { id: string; url: string; accountId: string; livemode: boolean };

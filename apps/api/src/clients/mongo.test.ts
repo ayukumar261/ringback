@@ -8,6 +8,8 @@ import {
   type PurchaseDoc,
 } from "./mongo.js";
 
+import { newAccessToken, newCallAccess } from "../handlers/payments/access.js";
+
 const mongoUri = process.env.MONGODB_URI;
 const input = {
   to: "+15551234567",
@@ -33,6 +35,8 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       url: "https://example.com/terms-and-conditions/2026-10-30",
     },
     policyVersion: "prompt-rules-v1",
+    access: newCallAccess(newAccessToken(), new Date()),
+    dashboardUrl: `${settings.publicWebUrl}/call/${changes._id ?? "request-test"}`,
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 35 * 60_000),
     status: "unpaid",

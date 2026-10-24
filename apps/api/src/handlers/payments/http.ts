@@ -107,7 +107,7 @@ const callResponse = (
   settings: PaymentConfig,
   token: string,
 ) => {
-  if (!request.checkout || !request.access)
+  if (!request.checkout)
     return Effect.fail(new PaymentError({ code: "unavailable" }));
   return Effect.succeed({
     call_id: request._id,
@@ -116,7 +116,7 @@ const callResponse = (
     status_url: `${settings.publicApiUrl}/call/${request._id}`,
     access_token: token,
     access_expires_at: request.access.expiresAt.toISOString(),
-    dashboard_url: callDashboardUrl(request, token, settings.publicWebUrl),
+    dashboard_url: callDashboardUrl(request, token),
     amount: request.amount,
     currency: request.currency,
     max_duration_seconds: request.maxDuration,
@@ -152,11 +152,10 @@ export const createCallRequest = (
     const id = randomUUID();
     return yield* Effect.gen(function* () {
       const inputHash = hash(clean);
-      // The legacy ID lookup prevents old keyed requests from creating a second checkout.
       const findExisting = () =>
         mongo.requests.findOne({
           environment,
-          $or: [{ "retry.keyHash": keyHash }, { _id: keyHash }],
+          "retry.keyHash": keyHash,
         });
       let record = keyHash ? yield* Effect.tryPromise(findExisting) : null;
       let token: string | undefined;
@@ -243,10 +242,7 @@ export const createCallRequest = (
         currency: record.currency,
         maxDuration: record.maxDuration,
         expiresAt: record.expiresAt,
-        returnUrl:
-          record.dashboardUrl ??
-          record.callUrl ??
-          `${settings.publicWebUrl}/call/${record._id}`,
+        returnUrl: record.dashboardUrl,
         terms: record.terms,
       });
       if (

@@ -14,11 +14,9 @@ export const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 export const newAccessToken = () => randomBytes(32).toString("base64url");
 
 export const callDashboardUrl = (
-  request: Pick<RequestDoc, "_id" | "dashboardUrl" | "callUrl">,
+  request: Pick<RequestDoc, "dashboardUrl">,
   token: string,
-  publicWebUrl: string,
-) =>
-  `${request.dashboardUrl ?? request.callUrl ?? `${publicWebUrl}/call/${request._id}`}#token=${token}`;
+) => `${request.dashboardUrl}#token=${token}`;
 
 // Require a canonical encoding of exactly 32 bytes, including for recovery secrets.
 export const validAccessSecret = (secret: string) =>
@@ -54,7 +52,7 @@ export const recoveredAccessToken = (secret: string, salt: string) =>
 export const newCallAccess = (
   token: string,
   now: Date,
-): NonNullable<RequestDoc["access"]> => ({
+): RequestDoc["access"] => ({
   tokenHash: secretHash(token),
   expiresAt: new Date(now.getTime() + ACCESS_TOKEN_TTL_MS),
 });
@@ -62,7 +60,6 @@ export const newCallAccess = (
 export const hasCallAccess = (request: RequestDoc, token: string | undefined) =>
   !!(
     token &&
-    request.access &&
     !request.access.revokedAt &&
     request.access.expiresAt.getTime() > Date.now() &&
     matchesSecret(token, request.access.tokenHash, "access")
@@ -94,11 +91,7 @@ export const retryAccessToken = (
       credentials.recoverySecret,
       recovery.salt,
     );
-    if (
-      token &&
-      (!request.access ||
-        !matchesSecret(token, request.access.tokenHash, "access"))
-    )
+    if (token && !matchesSecret(token, request.access.tokenHash, "access"))
       return undefined;
     token = recovered;
   }

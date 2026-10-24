@@ -313,7 +313,7 @@ curl -X POST http://localhost:3001/call \
 
 Retry with the same key, secret, and body after a network failure. The server uses HMAC-SHA256 over a fresh 32-byte salt to derive the call token from that secret. Only a recovery-secret hash and public salt are stored, so an authorized retry can reconstruct the same token without persisting it. The recovery secret authorizes creation retries only and cannot be used for call reads; it is specific to this request and introduces no account or persistent API key. Keep both secrets out of logs and analytics. Expiry or revocation invalidates recovery as well as bearer access.
 
-Without a recovery secret supplied on the initial request, a lost response or lost token cannot be recovered with the key alone. Keep the same key when checking an uncertain outcome; do not automatically switch keys, which would create another call request. A retry cannot add a recovery secret to an existing request. Legacy keyed requests likewise return `409` rather than gaining newly minted access or creating another Checkout Session.
+Without a recovery secret supplied on the initial request, a lost response or lost token cannot be recovered with the key alone. Keep the same key when checking an uncertain outcome; do not automatically switch keys, which would create another call request. A retry cannot add a recovery secret to an existing request.
 
 ### Follow live events
 

@@ -66,14 +66,14 @@ export const bootstrapCallAccess = callResponse(
     const { id = "" } = yield* HttpRouter.params;
     const record = yield* authorizeCallAccess(id, token);
     const response = yield* json({
-      access_expires_at: record.access!.expiresAt.toISOString(),
+      access_expires_at: record.access.expiresAt.toISOString(),
     });
     return yield* HttpServerResponse.setCookie(response, CALL_COOKIE, token, {
       path: callCookiePath(id),
       httpOnly: true,
       secure: settings.environment === "production",
       sameSite: "lax",
-      expires: record.access!.expiresAt,
+      expires: record.access.expiresAt,
     });
   }),
 );
@@ -82,7 +82,6 @@ export const bootstrapCallAccess = callResponse(
 export const callSnapshot = callResponse(
   Effect.gen(function* () {
     const { record, token } = yield* httpCallAccess;
-    const settings = yield* PaymentConfig;
     const mongo = yield* MongoClient;
     const call = yield* Effect.tryPromise(() =>
       mongo.calls.findOne({ room: record.room }),
@@ -90,7 +89,7 @@ export const callSnapshot = callResponse(
     return yield* json({
       call_id: record._id,
       status: record.status,
-      dashboard_url: callDashboardUrl(record, token, settings.publicWebUrl),
+      dashboard_url: callDashboardUrl(record, token),
       room: record.dialedAt ? record.room : null,
       error: record.error ?? null,
       to: record.to,
@@ -99,7 +98,7 @@ export const callSnapshot = callResponse(
       currency: record.currency,
       max_duration_seconds: record.maxDuration,
       created_at: record.createdAt.toISOString(),
-      access_expires_at: record.access!.expiresAt.toISOString(),
+      access_expires_at: record.access.expiresAt.toISOString(),
       checkout_expires_at: record.expiresAt.toISOString(),
       checkout_url:
         record.status === "unpaid" && record.expiresAt.getTime() > Date.now()
@@ -205,7 +204,7 @@ export const callEvents = callResponse(
       ),
     ).pipe(
       Stream.merge(keepalives),
-      Stream.interruptWhen(untilExpiry(record.access!.expiresAt.getTime())),
+      Stream.interruptWhen(untilExpiry(record.access.expiresAt.getTime())),
       Stream.catchAll(() =>
         Stream.succeed("event: access.unavailable\ndata: {}\n\n"),
       ),

@@ -191,6 +191,7 @@ describe("checkout", () => {
       ...input,
       inputHash: hash(input),
       access: newCallAccess(accessToken, new Date()),
+      dashboardUrl: `${settings.publicWebUrl}/call/${changes._id ?? "request-test"}`,
       ...settings,
       maxDuration: MAX_DURATION,
       terms: {
@@ -406,12 +407,9 @@ describe("checkout", () => {
         access_token: accessToken,
         amount: 50,
       });
-      expect(mongo.requests.findOne.mock.calls[0]![0]).toMatchObject({
+      expect(mongo.requests.findOne.mock.calls[0]![0]).toEqual({
         environment: "production",
-        $or: [
-          { "retry.keyHash": expect.stringMatching(/^[a-f0-9]{64}$/) },
-          { _id: expect.stringMatching(/^[a-f0-9]{64}$/) },
-        ],
+        "retry.keyHash": expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(h.createSession).not.toHaveBeenCalled();
     });
@@ -696,7 +694,7 @@ describe("checkout", () => {
         },
       });
       expect(
-        stored.access!.expiresAt.getTime() - stored.createdAt.getTime(),
+        stored.access.expiresAt.getTime() - stored.createdAt.getTime(),
       ).toBe(ACCESS_TOKEN_TTL_MS);
       for (const secret of [
         result.access_token,
@@ -817,7 +815,7 @@ describe("checkout", () => {
           createCallRequest(input, "revoked", creationCredentials),
         );
         const access = (await mongo.requests.findOne({ _id: result.call_id }))!
-          .access!;
+          .access;
         await mongo.requests.updateOne(
           { _id: result.call_id },
           { $set: { access: { ...access, ...change } } },
@@ -852,22 +850,6 @@ describe("checkout", () => {
         h.run(createCallRequest(input, "mutated", creationCredentials)),
       ).rejects.toThrow("conflict");
       expect(h.createSession).toHaveBeenCalledTimes(1);
-    });
-    it("refuses legacy key-based recovery rather than minting access or duplicating Checkout", async () => {
-      const legacy = requestFixture({
-        _id: hash(["call", settings.environment, "legacy"]),
-        access: undefined,
-      });
-      delete legacy.access;
-      await mongo.requests.insertOne(legacy);
-      await expect(
-        h.run(createCallRequest(input, "legacy", creationCredentials)),
-      ).rejects.toThrow("conflict");
-      expect(await mongo.requests.countDocuments()).toBe(1);
-      expect(h.createSession).not.toHaveBeenCalled();
-      expect(
-        (await mongo.requests.findOne({ _id: legacy._id }))!.access,
-      ).toBeUndefined();
     });
     it("rejects prohibited prompts before storing a request or contacting providers", async () => {
       await expect(
@@ -1147,7 +1129,6 @@ describe("status", () => {
       expect(response.status).toBe(401);
     });
     it.each([
-      { access: undefined },
       { access: newCallAccess(newAccessToken(), new Date()) },
       {
         access: {

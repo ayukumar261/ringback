@@ -50,6 +50,7 @@ const fixture = (id: string, token: string): RequestDoc => ({
   createdAt: new Date(),
   expiresAt: new Date(Date.now() + 35 * 60_000),
   access: newCallAccess(token, new Date()),
+  dashboardUrl: `${settings.publicWebUrl}/call/${id}`,
   status: "unpaid",
   room: `room-${id}`,
   checkout: {
@@ -209,10 +210,10 @@ describe("call authorization through the application router", () => {
     "denies expired, revoked, and unknown calls at %s",
     async (suffix) => {
       const h = await harness();
-      h.records[0]!.access!.revokedAt = new Date();
+      h.records[0]!.access.revokedAt = new Date();
       expect((await h.request(`/call/a${suffix}`, bearer())).status).toBe(404);
-      delete h.records[0]!.access!.revokedAt;
-      h.records[0]!.access!.expiresAt = new Date(0);
+      delete h.records[0]!.access.revokedAt;
+      h.records[0]!.access.expiresAt = new Date(0);
       expect((await h.request(`/call/a${suffix}`, cookie())).status).toBe(404);
       expect((await h.request(`/call/missing${suffix}`, bearer())).status).toBe(
         404,
@@ -365,7 +366,7 @@ describe("browser bootstrap", () => {
     expect(setCookie).toContain("Expires=");
     expect(setCookie).not.toContain("Domain=");
     expect(await response.json()).toEqual({
-      access_expires_at: h.records[0]!.access!.expiresAt.toISOString(),
+      access_expires_at: h.records[0]!.access.expiresAt.toISOString(),
     });
     expect(
       (await h.request("/call/a", { Cookie: setCookie.split(";")[0]! })).status,
@@ -585,7 +586,7 @@ describe("call event streams", () => {
       );
       const live = await readUntil(reader, "Live A");
       expect(live).not.toContain("Private B live");
-      h.records[0]!.access!.revokedAt = new Date();
+      h.records[0]!.access.revokedAt = new Date();
       await Effect.runPromise(
         PubSub.publish(h.feed, {
           id: "6-0",
@@ -615,7 +616,7 @@ describe("call event streams", () => {
     const reader = response.body!.getReader();
     try {
       await readUntil(reader, "retry:");
-      h.records[0]!.access!.revokedAt = new Date();
+      h.records[0]!.access.revokedAt = new Date();
       expect(await readUntil(reader, "access.unavailable")).toContain(
         "access.unavailable",
       );
@@ -627,7 +628,7 @@ describe("call event streams", () => {
 
   it("closes an idle stream at access expiry", async () => {
     const h = await harness();
-    h.records[0]!.access!.expiresAt = new Date(Date.now() + 100);
+    h.records[0]!.access.expiresAt = new Date(Date.now() + 100);
     const response = await h.request("/call/a/events", bearer());
     const reader = response.body!.getReader();
     try {

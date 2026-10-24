@@ -54,6 +54,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     ...input,
     inputHash: hash(input),
     access: newCallAccess(accessToken, new Date()),
+    dashboardUrl: `${settings.publicWebUrl}/call/${changes._id ?? "request-test"}`,
     ...settings,
     terms: {
       version: "2026-10-30",
