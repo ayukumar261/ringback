@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect";
 import { StripeError } from "../../clients/stripe.js";
 import { LiveKitError } from "../../clients/livekit.js";
+import { PreflightError } from "../../preflight/errors.js";
 
 // PaymentError is a failed payments step, carrying the error code the api responds with.
 export class PaymentError extends Data.TaggedError("PaymentError")<{
@@ -28,7 +29,8 @@ export const logPaymentError = (operation: string, error: unknown) =>
     operation,
     error instanceof PaymentError ||
       error instanceof StripeError ||
-      error instanceof LiveKitError
+      error instanceof LiveKitError ||
+      error instanceof PreflightError
       ? error.code
       : "internal",
   ).pipe(

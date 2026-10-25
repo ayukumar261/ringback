@@ -106,6 +106,28 @@ CORS_ORIGINS=http://localhost:3000
 
 The service-specific examples in [`apps/api/.env.example`](apps/api/.env.example) and [`apps/worker/.env.example`](apps/worker/.env.example) are also available as references.
 
+Paid call creation also needs `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` for Twilio Lookup v2. Keep these server-side. Number validity, country, and Line Type Intelligence must pass before Ringback creates a Checkout session; unavailable or unknown Lookup data does not approve a call. The API can still start and serve reads without Twilio credentials, but new eligible call requests return `503 lookup_unavailable`.
+
+Destination configuration (see the API's `.env.example` for defaults):
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `RINGBACK_ALLOWED_COUNTRIES` | `US` | US-only; configuring Canada or any other country is rejected at startup. `+1` alone never establishes eligibility. |
+| `RINGBACK_ALLOWED_US_TERRITORIES` | empty | Optional subset of `AS,GU,MP,PR,VI`; territories are blocked otherwise. |
+| `RINGBACK_ALLOWED_LINE_TYPES` | `landline,mobile,fixedVoip,nonFixedVoip` | Allowed voice line types. Premium, shared-cost, personal, voicemail, pager, and universal-access types are unsupported. |
+| `RINGBACK_ALLOW_NANP_TOLL_FREE` | `false` | Explicit opt-in to shared NANP toll-free numbers, independent of country attribution; Lookup must classify them as toll-free. |
+| `RINGBACK_BLOCKED_PHONE_PREFIXES` | empty | Additional comma-separated E.164 prefixes identified as high risk; these only restrict calling. |
+| `RINGBACK_LOOKUP_CACHE_TTL_SECONDS` | `3600` | Successful known results expire after this many seconds (maximum 86400), including when Redis retains an old entry. |
+| `RINGBACK_LOOKUP_TIMEOUT_MS` | `5000` | Lookup request timeout, bounded to 1–30000 milliseconds. Cache reads/writes have separate short timeouts and are best effort. |
+
+The [Twilio Line Type Intelligence documentation](https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence) describes the paid Lookup package. Canada and other non-US NANP destinations return `422 unsupported_country` before Lookup, so Canadian NPAC access is not needed. Missing or unknown US line-type data returns `503 line_type_unavailable`; a provider timeout or invalid response returns `503 lookup_unavailable`; authentication failure returns `503 lookup_access_denied`.
+
+Before enabling destinations in production, verify the account's [Elastic SIP Trunking geographic permissions](https://www.twilio.com/docs/sip-trunking/voice-dialing-geographic-permissions): enable only the intended US destinations' low-risk numbers, with high-risk toll-fraud and special-services ranges disabled. Twilio does not publish all high-risk ranges; its carrier permissions remain an additional enforcement layer. Lookup alone does not establish that a destination is low-risk. The US-only country policy follows the current Terms and Conditions; territories and shared NANP toll-free destinations remain separate explicit opt-ins.
+
+Lookup does not establish recipient consent or do-not-call status. The current policy leaves recipient permissions with the requester and does not collect a last-verified consent date, so this implementation makes no Reassigned Number requests and adds no AI prompt screening.
+
+To test only the Twilio adapter and destination rules locally, run `pnpm --filter api test src/clients/twilio.test.ts src/preflight/preflight.test.ts`. These tests mock Twilio and Redis and need no credentials or running services.
+
 The API and dashboard can run before you configure real LiveKit or ElevenLabs credentials. The dashboard will be empty until the worker publishes call events.
 
 ### 3. Start Redis and MongoDB
@@ -232,7 +254,7 @@ The local API base URL is `http://localhost:3001`. The checked-in Caddy configur
 | `GET`  | `/call/:id/events`   | Authorized live and replayed events for this call |
 | `POST` | `/webhooks/stripe`   | Signed Stripe payment events                                     |
 
-Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `unauthorized`, `not_found`, `conflict`, `unavailable`, or `internal`.
+Errors respond with `{ "error": "<code>" }`, where the code is `invalid_request`, `unauthorized`, `not_found`, `conflict`, `unavailable`, or `internal`; `/call` also returns the destination and Lookup error codes described below.
 
 ### Place a call
 
@@ -261,7 +283,7 @@ curl -X POST http://localhost:3001/call \
   }'
 ```
 
-The destination must use E.164 format. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
+The destination must use E.164 format and pass the US-only destination and line-type checks. Emergency/service codes, premium ranges, and configured high-risk prefixes are blocked before Lookup. Destination refusals return HTTP `422` with one of `invalid_destination`, `unsupported_country`, `blocked_number`, `toll_free_not_allowed`, or `unsupported_line_type`; Lookup failures return HTTP `503` as described under environment configuration. Rejected new requests create neither a call request nor a Checkout session. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
 
 ```json
 {
@@ -279,6 +301,8 @@ The destination must use E.164 format. The prompt must contain 1–16,000 charac
 ```
 
 Open `checkout_url` to pay. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and the call status moves from `unpaid` to `paid`, `dialing`, and `dialed`. A checkout nobody pays within 35 minutes ends in `expired`. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through.
+
+Dispatch repeats the destination check immediately before dialing, using the shared cache when it is still fresh. An expired result triggers a new Lookup. If the destination is no longer eligible or Lookup fails, the request becomes `failed` with the corresponding preflight error and no dial is attempted. This can happen after payment; there is currently no automatic refund for dispatch failure. Authorized retries returning an already-created Checkout do not require another Lookup; retries resuming Checkout creation are checked again.
 
 Save the access token and use it to read `status_url`:
 
@@ -393,7 +417,7 @@ Both current editions are `2026-10-30`, preserved at `/terms-and-conditions/2026
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Private dashboard is locked                | Reopen the original private link; check token expiry/revocation and the API's `RINGBACK_PUBLIC_WEB_URL` origin. |
 | Worker exits with a missing-variable error  | Load `.env` into the process environment; the worker does not load it automatically.                                        |
-| `POST /call` returns `503`                  | Check the Stripe keys for your `NODE_ENV`, and that LiveKit is reachable with the `twilio-outbound` trunk.                  |
+| `POST /call` returns `503`                  | Check the returned error code: Twilio credentials/Lookup access, Stripe keys for your `NODE_ENV`, and LiveKit connectivity.                  |
 | ElevenLabs reports an audio format mismatch | Set both agent audio formats to `pcm_48000`.                                                                                |
 | Recordings are unavailable                  | Set `AUDIO_DIR` for both services, ensure the worker can write there and the API can read it, and wait for the call to end. |
 | Browser cannot reach the API                | Check same-origin `/api` routing, `RINGBACK_API_UPSTREAM` locally, and Caddy's API upstream in deployment. |

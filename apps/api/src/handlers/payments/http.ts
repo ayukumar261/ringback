@@ -19,6 +19,8 @@ import {
 } from "../../clients/stripe.js";
 import { PaymentConfig } from "./config.js";
 import { PaymentError, logPaymentError } from "./errors.js";
+import { Preflight } from "../../preflight/preflight.js";
+import { PreflightError, preflightStatus } from "../../preflight/errors.js";
 import {
   checkCallInput,
   hash,
@@ -86,6 +88,12 @@ export const paymentResponse = <E, R>(
 ) =>
   effect.pipe(
     Effect.catchAll((error) => {
+      if (error instanceof PreflightError) {
+        const status = preflightStatus(error);
+        return (
+          status >= 500 ? logPaymentError(operation, error) : Effect.void
+        ).pipe(Effect.zipRight(json({ error: error.code }, status)));
+      }
       const code =
         error instanceof PaymentError ||
         error instanceof StripeError ||
@@ -144,6 +152,7 @@ export const createCallRequest = (
     const mongo = yield* MongoClient;
     const stripe = yield* StripeClient;
     const dialer = yield* LiveKitClient;
+    const preflight = yield* Preflight;
     const keyHash = idempotencyKey
       ? hash(["call", environment, idempotencyKey])
       : undefined;
@@ -157,6 +166,7 @@ export const createCallRequest = (
         });
       let record = keyHash ? yield* Effect.tryPromise(findExisting) : null;
       let token: string | undefined;
+      let checked = false;
       if (record) {
         token = retryAccessToken(record, credentials);
       }
@@ -164,6 +174,8 @@ export const createCallRequest = (
         // A read token is never a credential to create a new call.
         if (credentials.accessToken)
           return yield* new PaymentError({ code: "conflict" });
+        yield* preflight.check(clean.to);
+        checked = true;
         yield* dialer.ready;
         const now = new Date();
         const recovery = credentials.recoverySecret
@@ -236,6 +248,8 @@ export const createCallRequest = (
       // Stripe needs at least 30 minutes left on a new Checkout session
       if (record.expiresAt.getTime() < Date.now() + 30 * 60_000)
         return yield* new PaymentError({ code: "conflict" });
+      // An authorized retry can resume a saved request whose Checkout creation failed.
+      if (!checked) yield* preflight.check(record.to);
       const { accountId, session } = yield* stripe.createSession({
         requestId: record._id,
         requestSnapshotHash: digest,

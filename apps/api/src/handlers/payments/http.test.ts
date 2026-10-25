@@ -59,6 +59,10 @@ import {
   ACCESS_TOKEN_TTL_MS,
 } from "./access.js";
 
+import { Preflight } from "../../preflight/preflight.js";
+import { PreflightError } from "../../preflight/errors.js";
+import type { PhoneLookup } from "../../clients/twilio.js";
+
 const accessToken = newAccessToken();
 const creationCredentials = { recoverySecret: newAccessToken() };
 
@@ -304,6 +308,19 @@ describe("checkout", () => {
       }),
       dial: (request) => Effect.promise(() => dial(request)),
     });
+    const check = vi.fn<
+      (number: string) => Effect.Effect<PhoneLookup, PreflightError>
+    >((number) =>
+      Effect.succeed({
+        number,
+        valid: true,
+        country: "US",
+        lineType: "mobile",
+        lineTypeError: null,
+        checkedAt: Date.now(),
+        expiresAt: Date.now() + 3_600_000,
+      }),
+    );
     const provide = <A, E, R>(
       effect: Effect.Effect<A, E, R>,
       overrides: Partial<Settings> = {},
@@ -312,6 +329,7 @@ describe("checkout", () => {
         Effect.provideService(MongoClient, mongo as MongoClient),
         Effect.provideService(StripeClient, stripe),
         Effect.provideService(LiveKitClient, dialer),
+        Effect.provideService(Preflight, Preflight.make({ check })),
         Effect.provideService(
           PaymentConfig,
           PaymentConfig.make({ ...settings, ...overrides }),
@@ -320,13 +338,14 @@ describe("checkout", () => {
     return {
       sessions,
       createSession,
+      check,
       ready,
       dial,
       run: <A, E>(
         effect: Effect.Effect<
           A,
           E,
-          MongoClient | StripeClient | LiveKitClient | PaymentConfig
+          MongoClient | StripeClient | LiveKitClient | PaymentConfig | Preflight
         >,
         overrides: Partial<Settings> = {},
       ) => Effect.runPromise(provide(effect, overrides)),
@@ -336,6 +355,60 @@ describe("checkout", () => {
   };
 
   describe("checkout HTTP", () => {
+    it.each([
+      ["unsupported_country", 422],
+      ["unsupported_line_type", 422],
+      ["line_type_unavailable", 503],
+      ["lookup_access_denied", 503],
+      ["lookup_unavailable", 503],
+    ] as const)(
+      "rejects %s before creating a request or Checkout",
+      async (code, status) => {
+        const mongo = fakeMongo();
+        const h = harness(mongo);
+        h.check.mockReturnValueOnce(Effect.fail(new PreflightError({ code })));
+        const response = await h.http(route)(request(JSON.stringify(input)));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ error: code });
+        expect(h.check).toHaveBeenCalledWith(input.to);
+        expect(mongo.requests.insertOne).not.toHaveBeenCalled();
+        expect(h.createSession).not.toHaveBeenCalled();
+        expect(h.ready).not.toHaveBeenCalled();
+        expect(h.dial).not.toHaveBeenCalled();
+      },
+    );
+
+    it("returns an authorized existing Checkout without requiring another Lookup", async () => {
+      const mongo = fakeMongo();
+      mongo.requests.findOne.mockResolvedValue(requestFixture());
+      const h = harness(mongo);
+      h.check.mockReturnValue(
+        Effect.fail(new PreflightError({ code: "lookup_unavailable" })),
+      );
+      const result = await h.run(
+        createCallRequest(input, "retry", { accessToken }),
+      );
+      expect(result.checkout_url).toBe("https://checkout.stripe.com/test");
+      expect(h.check).not.toHaveBeenCalled();
+      expect(h.createSession).not.toHaveBeenCalled();
+    });
+
+    it("checks a saved request again before resuming failed Checkout creation", async () => {
+      const mongo = fakeMongo();
+      mongo.requests.findOne.mockResolvedValue(
+        requestFixture({ checkout: undefined }),
+      );
+      const h = harness(mongo);
+      h.check.mockReturnValueOnce(
+        Effect.fail(new PreflightError({ code: "unsupported_line_type" })),
+      );
+      await expect(
+        h.run(createCallRequest(input, "retry", { accessToken })),
+      ).rejects.toThrow("unsupported_line_type");
+      expect(h.check).toHaveBeenCalledWith(input.to);
+      expect(h.createSession).not.toHaveBeenCalled();
+    });
+
     it("rejects malformed JSON and input before provider/database work", async () => {
       const mongo = fakeMongo();
       const h = harness(mongo);

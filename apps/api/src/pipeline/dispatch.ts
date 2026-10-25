@@ -7,6 +7,8 @@ import {
   logPaymentFailure,
 } from "../handlers/payments/errors.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
+import { Preflight } from "../preflight/preflight.js";
+import { PreflightError } from "../preflight/errors.js";
 
 // dispatchCall claims the oldest paid call and dials it once, since a failed dial may have gone through.
 export const dispatchCall = Effect.gen(function* () {
@@ -65,6 +67,9 @@ export const dispatchCall = Effect.gen(function* () {
       requestSnapshotHash(record) !== record.requestSnapshotHash
     )
       return yield* new PaymentError({ code: "conflict" });
+    // The shared Lookup cache refreshes expired results before any dial attempt.
+    const preflight = yield* Preflight;
+    yield* preflight.check(record.to);
     yield* dialer.dial(record).pipe(
       Effect.timeoutFail({
         duration: "60 seconds",
@@ -80,7 +85,9 @@ export const dispatchCall = Effect.gen(function* () {
   }).pipe(
     Effect.catchAll((e) =>
       recordError(
-        e instanceof PaymentError || e instanceof LiveKitError
+        e instanceof PaymentError ||
+          e instanceof LiveKitError ||
+          e instanceof PreflightError
           ? e.code
           : "internal",
       ),

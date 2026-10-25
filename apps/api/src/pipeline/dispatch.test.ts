@@ -35,6 +35,10 @@ import { readCallRequest } from "../handlers/payments/http.js";
 import { newAccessToken, newCallAccess } from "../handlers/payments/access.js";
 import { handleStripeEvent } from "../webhooks/stripe.js";
 
+import { Preflight } from "../preflight/preflight.js";
+import { PreflightError } from "../preflight/errors.js";
+import type { PhoneLookup } from "../clients/twilio.js";
+
 const accessToken = newAccessToken();
 
 const input = {
@@ -175,6 +179,19 @@ const harness = (
         catch: () => new LiveKitError({ code: "unavailable" }),
       }),
   });
+  const check = vi.fn<
+    (number: string) => Effect.Effect<PhoneLookup, PreflightError>
+  >((number) =>
+    Effect.succeed({
+      number,
+      valid: true,
+      country: "US",
+      lineType: "mobile",
+      lineTypeError: null,
+      checkedAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+    }),
+  );
   const provide = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     overrides: Partial<Settings> = {},
@@ -182,23 +199,53 @@ const harness = (
     effect.pipe(
       Effect.provideService(MongoClient, mongo as MongoClient),
       Effect.provideService(LiveKitClient, dialer),
+      Effect.provideService(Preflight, Preflight.make({ check })),
       Effect.provideService(
         PaymentConfig,
         PaymentConfig.make({ ...settings, ...overrides }),
       ),
     );
   return {
+    check,
     ready,
     dial,
     provide,
     run: <A, E>(
-      effect: Effect.Effect<A, E, MongoClient | LiveKitClient | PaymentConfig>,
+      effect: Effect.Effect<
+        A,
+        E,
+        MongoClient | LiveKitClient | PaymentConfig | Preflight
+      >,
       overrides: Partial<Settings> = {},
     ) => Effect.runPromise(provide(effect, overrides)),
   };
 };
 
 describe("paid dispatch", () => {
+  it.each([
+    "unsupported_country",
+    "unsupported_line_type",
+    "lookup_unavailable",
+  ] as const)("does not dial when preflight returns %s", async (code) => {
+    const mongo = fakeMongo();
+    mongo.requests.findOneAndUpdate.mockResolvedValue(
+      requestFixture({
+        status: "dialing",
+        purchaseId: "acct_test:live:cs_test",
+      }),
+    );
+    mongo.purchases.findOne.mockResolvedValue(purchaseFixture());
+    const h = harness(mongo);
+    h.check.mockReturnValueOnce(Effect.fail(new PreflightError({ code })));
+    await h.run(dispatchCall);
+    expect(h.check).toHaveBeenCalledWith(input.to);
+    expect(h.dial).not.toHaveBeenCalled();
+    expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+      { _id: "request-test", status: "dialing" },
+      { $set: { status: "failed", error: code } },
+    );
+  });
+
   it.each(["development", "production"] as const)(
     "only claims and recovers %s requests",
     async (environment) => {
