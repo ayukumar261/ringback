@@ -171,4 +171,57 @@
     .hljs-comment {
         color: var(--color-ink-muted);
     }
+
+    /* The call view uses the website palette and respects the app's theme. */
+    [data-call-dashboard] {
+        color-scheme: light;
+        --color-paper: #fcfcfc;
+        --color-ink: #252525;
+        --color-ink-muted: #707070;
+        --color-link: #e6e6e6;
+        --color-link-hover: #d9d9d9;
+        --color-code: #f5f5f5;
+        --color-rule: #e7e7e7;
+        --background: var(--color-paper);
+        --foreground: var(--color-ink);
+        --card: #fff;
+        --card-foreground: var(--color-ink);
+        --popover: #fff;
+        --popover-foreground: var(--color-ink);
+        --primary: var(--color-ink);
+        --primary-foreground: var(--color-paper);
+        --secondary: var(--color-code);
+        --secondary-foreground: var(--color-ink);
+        --muted: var(--color-code);
+        --muted-foreground: var(--color-ink-muted);
+        --accent: var(--color-link);
+        --accent-foreground: var(--color-ink);
+        --border: var(--color-rule);
+        --input: var(--color-rule);
+        --ring: var(--color-ink-muted);
+        --call-live: #347354;
+        --call-live-paper: #f0f7f2;
+        --call-live-rule: #d8e8dd;
+    }
+
+    .dark [data-call-dashboard] {
+        color-scheme: dark;
+        --color-paper: #141414;
+        --color-ink: #ededed;
+        --color-ink-muted: #a2a2a2;
+        --color-link: #2d2d2d;
+        --color-link-hover: #3a3a3a;
+        --color-code: #1b1b1b;
+        --color-rule: #303030;
+        --card: #181818;
+        --popover: #1c1c1c;
+        --call-live: #a1c9af;
+        --call-live-paper: #1a2920;
+        --call-live-rule: #2e4235;
+    }
+
+    .call-live-dot {
+        background: var(--call-live);
+    }
+
 }

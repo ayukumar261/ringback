@@ -13,7 +13,8 @@ export const recordingSeconds = 4
 
 // Tests set the stage to move the mocked call through its lifecycle.
 export interface MockApi {
-  stage: "unpaid" | "paid" | "active" | "ended"
+  stage:
+    "unpaid" | "paid" | "dialing" | "active" | "ended" | "expired" | "failed"
   revoked: boolean
   checkoutExpiresAt?: string
   turns?: Turn[]

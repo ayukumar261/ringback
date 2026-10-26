@@ -17,19 +17,19 @@ test("unpaid Checkout expires on screen even before the API reports expiry", asy
   await expect(payment).toBeVisible()
   await page.clock.fastForward(60 * 60_000)
   await expect(payment).toHaveCount(0)
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "expired"'
-  )
+  await expect(
+    page.getByRole("heading", { name: "This call wasn’t started" })
+  ).toBeVisible()
   await expect(page.getByText("Private task for a")).toBeVisible()
   // An authoritative paid response still wins if payment finished at the deadline.
   api.stage = "paid"
   await page.clock.runFor(5_001)
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "paid"'
-  )
+  await expect(
+    page.getByRole("heading", { name: "Getting the call ready" })
+  ).toBeVisible()
 })
 
-test("live debug transcript follows new turns and corrections", async ({
+test("live transcript follows new turns and corrections", async ({
   page,
   api,
 }) => {
@@ -37,10 +37,25 @@ test("live debug transcript follows new turns and corrections", async ({
   api.stage = "active"
   await page.clock.install()
   await page.goto(`/call/a#token=${tokens.a}`)
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "active"'
-  )
-  await expect(page.getByText("no turns yet")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "The call is connected" })
+  ).toBeVisible()
+  await expect(page.getByRole("region", { name: "Recording" })).toBeVisible()
+  for (const name of [
+    "Play recording",
+    "Back 10 seconds",
+    "Forward 10 seconds",
+    "Playback speed",
+    "Download recording",
+  ]) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeDisabled()
+  }
+  await expect(
+    page.getByRole("slider", { name: "Recording position" })
+  ).toBeDisabled()
+  await expect(
+    page.getByText("Playback is available after the call ends.")
+  ).toBeVisible()
   api.turns = [
     {
       room: "room-a",
@@ -57,9 +72,20 @@ test("live debug transcript follows new turns and corrections", async ({
   await page.clock.runFor(15_001)
   await expect(page.locator("li")).toHaveCount(1)
   await expect(currentTurn).toContainText("Checking the appointment time.")
+  await expect(page.getByRole("button", { name: /Seek to/ })).toHaveCount(0)
+  expect(api.requests.some(({ url }) => url.endsWith("/audio"))).toBe(false)
+  // The same controls become usable when the recording is ready after the call.
+  api.stage = "ended"
+  await page.clock.runFor(5_001)
   await expect(
-    page.getByRole("button", { name: /Checking the appointment time/ })
-  ).toBeDisabled()
+    page.getByRole("button", { name: "Play recording", exact: true })
+  ).toBeEnabled()
+  await expect(
+    page.getByRole("slider", { name: "Recording position" })
+  ).toBeEnabled()
+  await expect(
+    page.getByText("Playback is available after the call ends.")
+  ).toHaveCount(0)
 })
 
 test("private link becomes a cookie and survives refresh and Checkout return", async ({
@@ -71,11 +97,13 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   await page.goto(`/call/a#token=${tokens.a}`)
   await expect(page.getByText("Private task for a")).toBeVisible()
   await expect(page).toHaveTitle("Call")
-  await expect(page.locator("main")).toHaveCSS("font-size", "12px")
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "unpaid"'
-  )
-  expect(await page.locator("body").innerText()).not.toMatch(/ringback|corbyn/i)
+  await expect(page.locator("main")).toHaveCSS("font-size", "14px")
+  await expect(
+    page.getByRole("heading", { name: "Ready when you are" })
+  ).toBeVisible()
+  await expect(
+    page.getByRole("link", { name: "Corbyn AI", exact: true })
+  ).toHaveAttribute("href", "/")
   expect(await page.locator("head").innerHTML()).not.toMatch(/ringback|corbyn/i)
   await expect(page).toHaveURL("/call/a")
   const cookies = await context.cookies(`${web.url}/api/call/a`)
@@ -100,16 +128,13 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   await expect(page.getByText("Private task for a")).toBeVisible()
   await page.getByRole("link", { name: "Continue to payment" }).click()
   await page.getByRole("link", { name: "Return to call" }).click()
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "paid"'
-  )
-  const confirmation = page.getByRole("region", { name: "Payment confirmed" })
-  await expect(confirmation).toContainText(
-    "Send the user their dashboard URL now"
-  )
+  await expect(
+    page.getByRole("heading", { name: "Getting the call ready" })
+  ).toBeVisible()
+  await expect(
+    page.getByRole("region", { name: "Payment confirmed" })
+  ).toHaveCount(0)
   const shareUrl = `${web.url}/call/a#token=${tokens.a}`
-  await expect(confirmation.getByRole("link")).toHaveAttribute("href", shareUrl)
-  await expect(confirmation.getByRole("link")).toHaveText(shareUrl)
 
   const userContext = await browser.newContext()
   try {
@@ -179,15 +204,43 @@ test("recording ranges, transcript seeking, and mobile layout work after reload"
 }) => {
   api.stage = "ended"
   await page.goto(`/call/a#token=${tokens.a}`)
-  await expect(page.getByLabel("Call details")).toContainText(
-    '"status": "ended"'
-  )
+  await expect(page.getByRole("region", { name: "Recording" })).toBeVisible()
   await expect(page.getByText("Transcript for a")).toBeVisible()
   const audio = page.locator("audio")
   await expect
     .poll(() => audio.evaluate((el: HTMLAudioElement) => el.duration))
     .toBe(recordingSeconds)
-  await page.getByRole("button", { name: /0:02 user/ }).click()
+  await page
+    .getByRole("button", { name: "Play recording", exact: true })
+    .click()
+  await expect(
+    page.getByRole("button", { name: "Pause recording" })
+  ).toBeVisible()
+  await page.getByRole("button", { name: "Pause recording" }).click()
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.paused))
+    .toBe(true)
+  await page.getByRole("button", { name: "Playback speed" }).click()
+  await page.getByRole("menuitemradio", { name: "1.5×", exact: true }).click()
+  expect(await audio.evaluate((el: HTMLAudioElement) => el.playbackRate)).toBe(
+    1.5
+  )
+  const position = page.getByRole("slider", { name: "Recording position" })
+  await position.focus()
+  await position.press("Home")
+  await position.press("ArrowRight")
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBeCloseTo(0.1)
+  await page.getByRole("button", { name: "Forward 10 seconds" }).click()
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBe(recordingSeconds)
+  await page.getByRole("button", { name: "Back 10 seconds" }).click()
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBe(0)
+  await page.getByRole("button", { name: "Seek to 0:02" }).click()
   await expect
     .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
     .toBe(2)
@@ -208,3 +261,140 @@ test("recording ranges, transcript seeking, and mobile layout work after reload"
     )
   ).toBe(true)
 })
+
+test("reading earlier messages pauses following without stopping live updates", async ({
+  page,
+  api,
+}) => {
+  api.stage = "active"
+  api.turns = Array.from({ length: 20 }, (_, index) => ({
+    room: "room-a",
+    seq: index + 1,
+    role: "agent" as const,
+    text: `Message ${index + 1}: checking the appointment details.`,
+    at: 1000 + index * 1000,
+  }))
+  await page.clock.install()
+  await page.goto(`/call/a#token=${tokens.a}`)
+  const transcript = page.getByRole("region", { name: "Call transcript" })
+  const distanceFromBottom = () =>
+    transcript.evaluate(
+      (el) => el.scrollHeight - el.scrollTop - el.clientHeight
+    )
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await transcript.evaluate((el) => {
+    el.scrollTop = 0
+  })
+  await expect(
+    page.getByRole("button", { name: "Jump to latest" })
+  ).toBeVisible()
+  const pagePosition = await page.evaluate(() => window.scrollY)
+  api.turns = [
+    ...api.turns,
+    {
+      room: "room-a",
+      seq: 21,
+      role: "user",
+      text: "The appointment is confirmed.",
+      at: 22000,
+    },
+  ]
+  await page.clock.runFor(15_001)
+  await expect(transcript.locator("li")).toHaveCount(21)
+  expect(await transcript.evaluate((el) => el.scrollTop)).toBe(0)
+  expect(await page.evaluate(() => window.scrollY)).toBe(pagePosition)
+  await page.getByRole("button", { name: "Jump to latest" }).click()
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await expect(
+    page.getByRole("button", { name: "Jump to latest" })
+  ).toHaveCount(0)
+})
+
+test("the transcript can be copied with speakers and recording timestamps", async ({
+  page,
+  context,
+  api,
+}) => {
+  api.stage = "ended"
+  await context.grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.goto(`/call/a#token=${tokens.a}`)
+  await page.getByRole("button", { name: "Copy transcript" }).click()
+  await expect(
+    page.getByRole("status", { name: "Transcript copy status" })
+  ).toHaveText("Transcript copied")
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "0:00 Assistant\nTranscript for a\n\n0:02 Recipient\nYes, the appointment is confirmed."
+  )
+})
+
+test("the theme menu persists preferences and follows the system and shortcut", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" })
+  await page.goto(`/call/a#token=${tokens.a}`)
+  await expect(
+    page.getByRole("heading", { name: "+1 (555) 123-4567" })
+  ).toBeVisible()
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(20, 20, 20)"
+  )
+  await page.getByRole("button", { name: "Change theme" }).click()
+  await page.getByRole("menuitemradio", { name: "Light", exact: true }).click()
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(252, 252, 252)"
+  )
+  await page.reload()
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(252, 252, 252)"
+  )
+  await page.getByRole("button", { name: "Change theme" }).click()
+  await page.getByRole("menuitemradio", { name: "System", exact: true }).click()
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(20, 20, 20)"
+  )
+  await page.emulateMedia({ colorScheme: "light" })
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(252, 252, 252)"
+  )
+  await page.getByRole("button", { name: "Change theme" }).click()
+  await page.getByRole("menuitemradio", { name: "Dark", exact: true }).click()
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(20, 20, 20)"
+  )
+  await page.keyboard.press("d")
+  await expect(page.locator("main")).toHaveCSS(
+    "background-color",
+    "rgb(252, 252, 252)"
+  )
+  // The public website still follows the system, independent of the app shortcut.
+  await page.emulateMedia({ colorScheme: "dark" })
+  await page.goto("/documentation")
+  await expect(page.locator("[data-website]")).toHaveCSS(
+    "background-color",
+    "rgb(20, 20, 20)"
+  )
+})
+
+for (const [stage, heading] of [
+  ["dialing", "Waiting for an answer"],
+  ["failed", "The call couldn’t be placed"],
+] as const) {
+  test(`${stage} calls show a clear status without offering payment`, async ({
+    page,
+    api,
+  }) => {
+    api.stage = stage
+    await page.goto(`/call/a#token=${tokens.a}`)
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible()
+    await expect(
+      page.getByRole("link", { name: "Continue to payment" })
+    ).toHaveCount(0)
+    await expect(page.getByText("Private task for a")).toBeVisible()
+  })
+}
