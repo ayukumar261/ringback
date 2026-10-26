@@ -41,7 +41,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
     access: newCallAccess(newAccessToken(), new Date()),
     dashboardUrl: `${settings.publicWebUrl}/call/${changes._id ?? "request-test"}`,
     createdAt: new Date(),
-    expiresAt: new Date(Date.now() + 35 * 60_000),
+    expiresAt: new Date(Date.now() + 60 * 60_000),
     status: "unpaid",
     room: "call_request-test",
     checkout: {

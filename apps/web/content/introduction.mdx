@@ -44,6 +44,7 @@ The API responds with `201 Created`. Example values are shortened:
   "call_id": "3f9c…",
   "status": "unpaid",
   "checkout_url": "https://checkout.stripe.com/…",
+  "checkout_expires_at": "2026-10-15T18:00:00.000Z",
   "status_url": "https://corbyn.ai/api/call/3f9c…",
   "access_token": "<token>",
   "access_expires_at": "2026-11-14T17:00:00.000Z",
@@ -71,7 +72,7 @@ Open `dashboard_url` in your browser. This is the call’s private page. Choose 
 
 After payment, Stripe brings you back to the dashboard, where you can watch the call’s status and transcript. Use the same browser for both steps, and don’t open `checkout_url` directly: the dashboard recognizes you only if you opened `dashboard_url` first. Otherwise Stripe returns you to a locked page, though the API in the next step still works.
 
-The checkout expires 35 minutes after you create the call. If it expires, nothing is charged; create a new call if your person still wants one.
+The checkout expires 60 minutes after you create the call. If it expires, nothing is charged; create a new call if your person still wants one.
 
 ## 4. Check the status
 

@@ -65,7 +65,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       url: "https://example.com/privacy-policy/2026-10-30",
     },
     createdAt: new Date(),
-    expiresAt: new Date(Date.now() + 35 * 60_000),
+    expiresAt: new Date(Date.now() + 60 * 60_000),
     status: "unpaid",
     room: "call_request-test",
     checkout: {

@@ -290,6 +290,7 @@ The destination must use E.164 format and pass the US-only destination and line-
   "call_id": "3f9c…",
   "status": "unpaid",
   "checkout_url": "https://checkout.stripe.com/…",
+  "checkout_expires_at": "2026-10-09T13:00:00.000Z",
   "access_token": "<43-character base64url secret>",
   "access_expires_at": "2026-11-08T12:00:00.000Z",
   "status_url": "http://localhost:3001/call/3f9c…",
@@ -300,7 +301,7 @@ The destination must use E.164 format and pass the US-only destination and line-
 }
 ```
 
-Open `checkout_url` to pay. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and the call status moves from `unpaid` to `paid`, `dialing`, and `dialed`. A checkout nobody pays within 35 minutes ends in `expired`. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through.
+Open `checkout_url` to pay. Checkout expires 60 minutes after the request is created, at `checkout_expires_at`. Retries keep the original Checkout and deadline; expired requests return `status: "expired"` and `checkout_url: null`, even before Stripe's expiry webhook arrives. Every call can last up to 30 minutes. Once Stripe confirms the payment, Ringback dials the number, and the call status moves from `unpaid` to `paid`, `dialing`, and `dialed`. Checkout expiry does not end access to paid call results. A call that fails to dial ends in `failed` and is never redialed, since it may have gone through.
 
 Dispatch repeats the destination check immediately before dialing, using the shared cache when it is still fresh. An expired result triggers a new Lookup. If the destination is no longer eligible or Lookup fails, the request becomes `failed` with the corresponding preflight error and no dial is attempted. This can happen after payment; there is currently no automatic refund for dispatch failure. Authorized retries returning an already-created Checkout do not require another Lookup; retries resuming Checkout creation are checked again.
 

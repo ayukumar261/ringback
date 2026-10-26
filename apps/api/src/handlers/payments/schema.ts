@@ -12,6 +12,14 @@ export const PRIVACY_VERSION = "2026-10-30";
 // MAX_DURATION caps every call at 30 minutes.
 export const MAX_DURATION = 30 * 60;
 
+// Stripe's expiry webhook can arrive after the payment link has already expired.
+export const callRequestStatus = (
+  request: Pick<RequestDoc, "status" | "expiresAt">,
+) =>
+  request.status === "unpaid" && request.expiresAt.getTime() <= Date.now()
+    ? "expired"
+    : request.status;
+
 // CallInput is the POST /call body, one E.164 destination and the prompt the call runs on.
 export const CallInput = Schema.Struct({
   to: Schema.String.pipe(Schema.pattern(/^\+[1-9]\d{6,14}$/)),

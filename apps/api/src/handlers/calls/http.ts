@@ -18,6 +18,7 @@ import {
   validAccessSecret,
 } from "../payments/access.js";
 import { PaymentConfig } from "../payments/config.js";
+import { callRequestStatus } from "../payments/schema.js";
 import { PaymentError } from "../payments/errors.js";
 import { json, paymentResponse } from "../payments/http.js";
 import { listTurns } from "../turns/turns.js";
@@ -86,9 +87,10 @@ export const callSnapshot = callResponse(
     const call = yield* Effect.tryPromise(() =>
       mongo.calls.findOne({ room: record.room }),
     );
+    const status = callRequestStatus(record);
     return yield* json({
       call_id: record._id,
-      status: record.status,
+      status,
       dashboard_url: callDashboardUrl(record, token),
       room: record.dialedAt ? record.room : null,
       error: record.error ?? null,
@@ -100,10 +102,7 @@ export const callSnapshot = callResponse(
       created_at: record.createdAt.toISOString(),
       access_expires_at: record.access.expiresAt.toISOString(),
       checkout_expires_at: record.expiresAt.toISOString(),
-      checkout_url:
-        record.status === "unpaid" && record.expiresAt.getTime() > Date.now()
-          ? (record.checkout?.url ?? null)
-          : null,
+      checkout_url: status === "unpaid" ? (record.checkout?.url ?? null) : null,
       call: call
         ? {
             status: call.status,

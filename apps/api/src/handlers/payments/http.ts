@@ -23,6 +23,7 @@ import { Preflight } from "../../preflight/preflight.js";
 import { PreflightError, preflightStatus } from "../../preflight/errors.js";
 import {
   checkCallInput,
+  callRequestStatus,
   hash,
   MAX_DURATION,
   PRIVACY_VERSION,
@@ -115,10 +116,12 @@ const callResponse = (
 ) => {
   if (!request.checkout)
     return Effect.fail(new PaymentError({ code: "unavailable" }));
+  const status = callRequestStatus(request);
   return Effect.succeed({
     call_id: request._id,
-    status: request.status,
-    checkout_url: request.checkout.url,
+    status,
+    checkout_url: status === "unpaid" ? request.checkout.url : null,
+    checkout_expires_at: request.expiresAt.toISOString(),
     status_url: `${settings.publicApiUrl}/call/${request._id}`,
     access_token: token,
     access_expires_at: request.access.expiresAt.toISOString(),
@@ -208,7 +211,10 @@ export const createCallRequest = (
           inputHash,
           requestSnapshotHash: requestSnapshotHash(snapshot),
           createdAt: now,
-          expiresAt: new Date(now.getTime() + 35 * 60_000),
+          // Match Stripe's whole-second deadline in every API response.
+          expiresAt: new Date(
+            Math.floor(now.getTime() / 1000) * 1000 + 60 * 60_000,
+          ),
           access: newCallAccess(token, now),
           ...(keyHash && { retry: { keyHash, ...(recovery && { recovery }) } }),
           status: "unpaid",
@@ -420,7 +426,7 @@ export const readCallRequest = (id: string, token: string | undefined) =>
     const request = yield* authorizeCallAccess(id, token);
     return {
       call_id: id,
-      status: request.status,
+      status: callRequestStatus(request),
       room: request.dialedAt ? request.room : null,
       error: request.error ?? null,
     };

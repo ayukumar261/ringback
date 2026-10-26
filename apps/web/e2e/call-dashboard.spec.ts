@@ -5,6 +5,30 @@ import { web } from "./support/servers"
 // Browser tests exercise real cookies and navigation against a controlled API.
 // The actual Effect router's authorization, ranges, and SSE are tested in apps/api.
 
+test("unpaid Checkout expires on screen even before the API reports expiry", async ({
+  page,
+  api,
+}) => {
+  const now = new Date()
+  api.checkoutExpiresAt = new Date(now.getTime() + 60 * 60_000).toISOString()
+  await page.clock.install({ time: now })
+  await page.goto(`/call/a#token=${tokens.a}`)
+  const payment = page.getByRole("link", { name: "Continue to payment" })
+  await expect(payment).toBeVisible()
+  await page.clock.fastForward(60 * 60_000)
+  await expect(payment).toHaveCount(0)
+  await expect(page.getByLabel("Call details")).toContainText(
+    '"status": "expired"'
+  )
+  await expect(page.getByText("Private task for a")).toBeVisible()
+  // An authoritative paid response still wins if payment finished at the deadline.
+  api.stage = "paid"
+  await page.clock.runFor(5_001)
+  await expect(page.getByLabel("Call details")).toContainText(
+    '"status": "paid"'
+  )
+})
+
 test("live debug transcript follows new turns and corrections", async ({
   page,
   api,

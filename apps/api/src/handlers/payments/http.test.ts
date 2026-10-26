@@ -203,7 +203,7 @@ describe("checkout", () => {
         url: "https://example.com/privacy-policy/2026-10-30",
       },
       createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 35 * 60_000),
+      expiresAt: new Date(Date.now() + 60 * 60_000),
       status: "unpaid",
       room: "call_request-test",
       checkout: {
@@ -489,6 +489,23 @@ describe("checkout", () => {
       });
       expect(h.createSession).not.toHaveBeenCalled();
     });
+    it("returns the original deadline and hides an expired Checkout on retry", async () => {
+      const mongo = fakeMongo();
+      const record = requestFixture({ expiresAt: new Date(Date.now() - 1) });
+      mongo.requests.findOne.mockResolvedValue(record);
+      const h = harness(mongo);
+      const result = await h.run(
+        createCallRequest(input, "retry", { accessToken }),
+      );
+      expect(result).toMatchObject({
+        status: "expired",
+        checkout_url: null,
+        checkout_expires_at: record.expiresAt.toISOString(),
+        access_token: accessToken,
+      });
+      expect(h.createSession).not.toHaveBeenCalled();
+      expect(h.dial).not.toHaveBeenCalled();
+    });
   });
 
   describe.skipIf(!mongoUri)("checkout persistence", () => {
@@ -522,6 +539,48 @@ describe("checkout", () => {
       }
     });
     const h = { ...harness(mongo), mongo };
+    it("creates a 60-minute Checkout despite creation latency and preserves its deadline on retry", async () => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      try {
+        const insert = mongo.requests.insertOne.bind(mongo.requests);
+        const save = vi
+          .spyOn(mongo.requests, "insertOne")
+          .mockImplementationOnce(async (...args) => {
+            const result = await insert(...args);
+            clock.mockReturnValue(now + 2_000);
+            return result;
+          });
+        try {
+          const result = await h.run(
+            createCallRequest(input, "expiry", creationCredentials),
+          );
+          const stored = (await mongo.requests.findOne({
+            _id: result.call_id,
+          }))!;
+          expect(stored.expiresAt.getTime()).toBe(
+            Math.floor(stored.createdAt.getTime() / 1000) * 1000 + 60 * 60_000,
+          );
+          expect(h.createSession.mock.calls[0]![0].expiresAt).toEqual(
+            stored.expiresAt,
+          );
+          expect(result.checkout_expires_at).toBe(
+            stored.expiresAt.toISOString(),
+          );
+          clock.mockReturnValue(now + 45 * 60_000);
+          expect(
+            await h.run(
+              createCallRequest(input, "expiry", creationCredentials),
+            ),
+          ).toEqual(result);
+          expect(h.createSession).toHaveBeenCalledTimes(1);
+        } finally {
+          save.mockRestore();
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    });
     it("returns a shareable website URL and uses it for Checkout returns", async () => {
       const response = await h.http(route, {
         publicApiUrl: "https://api.example.com/api",
@@ -1284,6 +1343,7 @@ describe("status", () => {
     _id: "request-test",
     room: "call_request-test",
     status: "unpaid" as const,
+    expiresAt: new Date(Date.now() + 60 * 60_000),
     to: "+15551234567",
     prompt: "Private call details",
     access: newCallAccess(accessToken, new Date()),

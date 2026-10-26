@@ -17,7 +17,7 @@ const input: CheckoutInput = {
   amount: 50,
   currency: "usd",
   maxDuration: 1800,
-  expiresAt: new Date(Date.now() + 35 * 60_000),
+  expiresAt: new Date(Date.now() + 60 * 60_000),
   returnUrl: "https://example.com/call/request-test",
   terms: {
     version: "2026-10-30",

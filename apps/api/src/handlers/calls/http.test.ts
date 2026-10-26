@@ -52,7 +52,7 @@ const fixture = (id: string, token: string): RequestDoc => ({
   },
   environment: "production",
   createdAt: new Date(),
-  expiresAt: new Date(Date.now() + 35 * 60_000),
+  expiresAt: new Date(Date.now() + 60 * 60_000),
   access: newCallAccess(token, new Date()),
   dashboardUrl: `${settings.publicWebUrl}/call/${id}`,
   status: "unpaid",
@@ -298,6 +298,33 @@ describe("call authorization through the application router", () => {
       }
     },
   );
+
+  it("reports an expired unpaid Checkout before Stripe's expiry webhook arrives", async () => {
+    const h = await harness();
+    const deadline = new Date();
+    h.records[0]!.expiresAt = deadline;
+    const response = await h.request("/call/a", bearer());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "expired",
+      checkout_expires_at: deadline.toISOString(),
+      checkout_url: null,
+    });
+  });
+
+  it("keeps paid results accessible after the Checkout deadline", async () => {
+    const h = await harness();
+    h.records[0]!.status = "dialed";
+    h.records[0]!.expiresAt = new Date(0);
+    const response = await h.request("/call/a", bearer());
+    expect(await response.json()).toMatchObject({
+      status: "dialed",
+      checkout_url: null,
+      call: { status: "ended", audio_available: true },
+    });
+    expect((await h.request("/call/a/turns", bearer())).status).toBe(200);
+    expect((await h.request("/call/a/audio", bearer())).status).toBe(200);
+  });
 
   it("returns each transcript only to its own credential", async () => {
     const h = await harness();

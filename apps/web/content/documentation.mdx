@@ -58,6 +58,7 @@ curl -X POST https://corbyn.ai/api/call \
   "call_id": "3f9c…",
   "status": "unpaid",
   "checkout_url": "https://checkout.stripe.com/…",
+  "checkout_expires_at": "2026-10-15T18:00:00.000Z",
   "status_url": "https://corbyn.ai/api/call/3f9c…",
   "access_token": "<token>",
   "access_expires_at": "2026-11-14T17:00:00.000Z",
@@ -70,7 +71,8 @@ curl -X POST https://corbyn.ai/api/call \
 
 - `call_id`: the call’s ID, used by every other endpoint.
 - `status`: `unpaid` for a new call. See [Call status](#call-status).
-- `checkout_url`: the Stripe Checkout page for this call.
+- `checkout_url`: the Stripe Checkout page while payment is still available; `null` on retries after payment or expiry.
+- `checkout_expires_at`: the payment deadline, as an ISO 8601 timestamp. Retries preserve the original Checkout and deadline.
 - `status_url`: the [Get a call](#get-a-call) address for this call.
 - `access_token`: the call’s access token. Save it; Corbyn AI can’t show it again.
 - `access_expires_at`: when the token stops working, as an ISO 8601 timestamp.
@@ -79,7 +81,7 @@ curl -X POST https://corbyn.ai/api/call \
 - `currency`: the price currency, `usd`.
 - `max_duration_seconds`: the longest the call can last. `1800` is 30 minutes.
 
-**Paying:** open `dashboard_url` in a browser and choose **Continue to payment**. After payment, Stripe returns that browser to the dashboard. Opening `checkout_url` directly also pays for the call, but Stripe then returns to a locked page, because that browser never opened the private link. The checkout expires 35 minutes after the call is created.
+**Paying:** open `dashboard_url` in a browser and choose **Continue to payment**. After payment, Stripe returns that browser to the dashboard. Opening `checkout_url` directly also pays for the call, but Stripe then returns to a locked page, because that browser never opened the private link. The checkout expires 60 minutes after the call is created. The API and dashboard show unpaid requests as `expired` at that deadline and stop offering the payment link, even if Stripe's expiry webhook arrives later. Paid call results remain accessible until the separate access deadline.
 
 **Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`. The paid dashboard shows this link, and the authenticated status response below returns it as `dashboard_url` too.
 
@@ -110,7 +112,7 @@ curl https://corbyn.ai/api/call/<call_id> \
   "max_duration_seconds": 1800,
   "created_at": "2026-10-15T17:00:00.000Z",
   "access_expires_at": "2026-11-14T17:00:00.000Z",
-  "checkout_expires_at": "2026-10-15T17:35:00.000Z",
+  "checkout_expires_at": "2026-10-15T18:00:00.000Z",
   "checkout_url": null,
   "call": {
     "status": "ended",
@@ -149,7 +151,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 
 A call can also end early:
 
-- `expired`: the checkout wasn’t paid within 35 minutes. Nothing was charged.
+- `expired`: the checkout wasn’t paid within 60 minutes. Nothing was charged.
 - `failed`: payment failed (`error` is `payment_failed`) or the call couldn’t be placed. Nothing is dialed after a failed payment. A failed dial isn’t retried, because it may have gone through.
 
 After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
@@ -247,7 +249,7 @@ curl https://corbyn.ai/api/call/<call_id>/audio \
 
 ## Retry safely
 
-Without an `Idempotency-Key`, every request creates a new call. Nothing is charged until a checkout is paid, so sending the request again after an error is safe. Calls nobody pays for expire after 35 minutes.
+Without an `Idempotency-Key`, every request creates a new call. Nothing is charged until a checkout is paid, so sending the request again after an error is safe. Calls nobody pays for expire after 60 minutes.
 
 To make a retry return the original call instead of creating another one, send an `Idempotency-Key` that’s unique to this call. To also recover the access token if the first response never arrives, send an `Idempotency-Secret`: 32 random bytes encoded as unpadded base64url, 43 characters long. Generate it and save it before sending the request:
 
@@ -294,7 +296,7 @@ Errors return a JSON body with a code:
 
 - **Price:** $0.50 USD per call.
 - **Call length:** up to 30 minutes.
-- **Checkout:** expires 35 minutes after the call is created.
+- **Checkout:** expires 60 minutes after the call is created.
 - **Access token:** works for 30 days after the call is created.
 - **Prompt:** 1 to 16,000 characters.
 - **Request body:** up to 100 KB.

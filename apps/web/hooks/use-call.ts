@@ -11,6 +11,7 @@ const isDenied = (error?: Error) =>
 
 export function useCall(id: string, onAccessLost: () => void) {
   const [connected, setConnected] = useState(false)
+  const [expiredCheckout, setExpiredCheckout] = useState<string>()
   const call = useSWR<Call, Error>(callKey(id), fetcher, {
     refreshInterval: (data) =>
       data?.call?.status === "ended" ? 30_000 : 5_000,
@@ -22,6 +23,20 @@ export function useCall(id: string, onAccessLost: () => void) {
   })
   const { mutate: refreshCall } = call
   const { mutate: refreshTurns } = turns
+  const checkoutStatus = call.data?.status
+  const checkoutExpiresAt = call.data?.checkout_expires_at
+
+  useEffect(() => {
+    if (checkoutStatus !== "unpaid" || !checkoutExpiresAt) return
+    const timeout = setTimeout(
+      () => {
+        setExpiredCheckout(checkoutExpiresAt)
+        void refreshCall().catch(() => {})
+      },
+      Math.max(0, Date.parse(checkoutExpiresAt) - Date.now())
+    )
+    return () => clearTimeout(timeout)
+  }, [checkoutStatus, checkoutExpiresAt, refreshCall])
 
   // Callers also check this while rendering so stale data never paints.
   const denied = isDenied(call.error) || isDenied(turns.error)
@@ -71,5 +86,7 @@ export function useCall(id: string, onAccessLost: () => void) {
     return () => source.close()
   }, [id, onAccessLost, refreshCall, refreshTurns])
 
-  return { call, turns, connected, denied }
+  const checkoutExpired =
+    checkoutStatus === "unpaid" && expiredCheckout === checkoutExpiresAt
+  return { call, turns, connected, denied, checkoutExpired }
 }

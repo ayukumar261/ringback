@@ -8,7 +8,7 @@ import { Effect } from "effect";
 import { MongoClient, type RequestDoc } from "../../clients/mongo.js";
 import { PaymentError } from "./errors.js";
 
-// Access outlives the 35-minute checkout window so completed results remain readable.
+// Access outlives the 60-minute checkout window so completed results remain readable.
 export const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 
 export const newAccessToken = () => randomBytes(32).toString("base64url");

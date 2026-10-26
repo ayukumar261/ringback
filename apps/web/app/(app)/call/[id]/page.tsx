@@ -120,7 +120,10 @@ function CallContent({
   id: string
   onAccessLost: () => void
 }) {
-  const { call, turns, connected, denied } = useCall(id, onAccessLost)
+  const { call, turns, connected, denied, checkoutExpired } = useCall(
+    id,
+    onAccessLost
+  )
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState<number>()
   const [audioError, setAudioError] = useState(false)
@@ -143,7 +146,7 @@ function CallContent({
   }
   const details = {
     call_id: data.call_id,
-    status: data.status,
+    status: checkoutExpired ? "expired" : data.status,
     to: data.to,
     amount: data.amount,
     currency: data.currency,
@@ -189,7 +192,7 @@ function CallContent({
           updates unavailable; reconnecting…
         </p>
       )}
-      {data.checkout_url && (
+      {!checkoutExpired && data.checkout_url && (
         <a href={data.checkout_url} className="self-start underline">
           Continue to payment
         </a>

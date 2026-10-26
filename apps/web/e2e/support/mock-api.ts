@@ -15,6 +15,7 @@ export const recordingSeconds = 4
 export interface MockApi {
   stage: "unpaid" | "paid" | "active" | "ended"
   revoked: boolean
+  checkoutExpiresAt?: string
   turns?: Turn[]
   requests: { url: string; cookie: string; range?: string }[]
 }
@@ -44,7 +45,8 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
     revoked: false,
     requests: [],
   }
-  const expires = new Date(Date.now() + 3600_000).toISOString()
+  const expires = new Date(Date.now() + 30 * 24 * 3600_000).toISOString()
+  const checkoutExpires = new Date(Date.now() + 3600_000).toISOString()
   await context.route("/api/**", async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -121,7 +123,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
       max_duration_seconds: 1800,
       created_at: new Date().toISOString(),
       access_expires_at: expires,
-      checkout_expires_at: expires,
+      checkout_expires_at: state.checkoutExpiresAt ?? checkoutExpires,
       checkout_url: stage === "unpaid" ? `${web.url}/checkout` : null,
       call: dialed
         ? {

@@ -72,7 +72,7 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       url: "https://example.com/privacy-policy/2026-10-30",
     },
     createdAt: new Date(),
-    expiresAt: new Date(Date.now() + 35 * 60_000),
+    expiresAt: new Date(Date.now() + 60 * 60_000),
     status: "unpaid",
     room: "call_request-test",
     checkout: {
@@ -402,6 +402,16 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       return { result: { call_id: record._id }, session };
     },
   };
+  it.each(["unpaid", "expired"] as const)(
+    "does not dial a %s request after its Checkout deadline",
+    async (status) => {
+      await mongo.requests.insertOne(
+        requestFixture({ status, expiresAt: new Date(0) }),
+      );
+      expect(await h.run(dispatchCall)).toBe(false);
+      expect(h.dial).not.toHaveBeenCalled();
+    },
+  );
   it("claims a paid call once across concurrent consumers and repeated webhooks", async () => {
     const { result, session } = await h.paid();
     await Promise.all(Array.from({ length: 10 }, () => h.run(dispatchCall)));
