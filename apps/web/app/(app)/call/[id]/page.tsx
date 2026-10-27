@@ -203,32 +203,38 @@ function CallPlaceholder({
   loading?: boolean
   onRetry?: () => void
 }) {
-  const Icon = loading ? LoaderCircle : LockKeyhole
+  if (loading) {
+    return (
+      <div
+        role="status"
+        aria-label="Loading call"
+        className="fixed inset-0 grid place-items-center text-muted-foreground"
+      >
+        <LoaderCircle
+          aria-hidden="true"
+          className="size-5 animate-spin motion-reduce:animate-none"
+        />
+      </div>
+    )
+  }
+
   return (
     <div
       role="status"
-      aria-label={loading ? "Loading call" : "Call unavailable"}
+      aria-label="Call unavailable"
       className="mx-auto flex min-h-[75svh] max-w-sm flex-col items-center justify-center px-6 text-center"
     >
       <span className="mb-5 grid size-11 place-items-center rounded-xl border border-rule bg-code/50 text-ink-muted shadow-[0_1px_2px_#00000003]">
-        <Icon
-          aria-hidden="true"
-          className={cn(
-            "size-4",
-            loading && "animate-spin motion-reduce:animate-none"
-          )}
-        />
+        <LockKeyhole aria-hidden="true" className="size-4" />
       </span>
       <h1 className="text-[15px] font-medium tracking-[-0.02em]">
-        {loading ? "Opening your call…" : "This call is unavailable"}
+        This call is unavailable
       </h1>
-      {!loading && (
-        <p className="mt-2 text-[13px] leading-6 text-ink-muted">
-          {onRetry
-            ? "We couldn’t load the call. Please try again."
-            : "Open the original private link to view this call. It may have expired or you may not have access."}
-        </p>
-      )}
+      <p className="mt-2 text-[13px] leading-6 text-ink-muted">
+        {onRetry
+          ? "We couldn’t load the call. Please try again."
+          : "Open the original private link to view this call. It may have expired or you may not have access."}
+      </p>
       {onRetry && (
         <Button variant="outline" onClick={onRetry} className="mt-4">
           Try again
