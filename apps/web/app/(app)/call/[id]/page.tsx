@@ -924,18 +924,13 @@ function Transcript({
                 ? undefined
                 : turnStart(turn) - audioStartedAt
             const isCurrent = turn.seq === current?.seq
-            return (
-              <li
-                key={turn.seq}
-                ref={isCurrent ? currentRow : undefined}
-                aria-current={isCurrent ? "time" : undefined}
-                className={cn(
-                  "relative px-5 py-4",
-                  isCurrent &&
-                    "bg-muted/60 before:absolute before:inset-y-4 before:left-0 before:w-0.5 before:rounded-r before:bg-foreground/40"
-                )}
-              >
-                <div className="mb-1.5 flex h-5 items-center justify-between gap-4">
+            const seekTo =
+              onSeek && offset !== undefined
+                ? () => onSeek(offset / 1000)
+                : undefined
+            const content = (
+              <>
+                <span className="mb-1.5 flex h-5 items-center justify-between gap-4">
                   <span
                     className={cn(
                       "flex items-center gap-2 text-[11px] font-medium",
@@ -953,27 +948,42 @@ function Transcript({
                     />
                     {speakers[turn.role]}
                   </span>
-                  {offset !== undefined &&
-                    (onSeek ? (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => onSeek(offset / 1000)}
-                        aria-label={`Seek to ${offsetLabel(offset)}`}
-                        title="Seek to this point"
-                        className="-mr-1.5 h-6 px-1.5 font-mono text-[10px] font-normal text-muted-foreground tabular-nums"
-                      >
-                        {offsetLabel(offset)}
-                      </Button>
-                    ) : (
-                      <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
-                        {offsetLabel(offset)}
-                      </span>
-                    ))}
-                </div>
-                <p className="text-[14px] leading-[1.75] wrap-anywhere whitespace-pre-wrap selection:bg-foreground/15">
+                  {offset !== undefined && (
+                    <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
+                      {offsetLabel(offset)}
+                    </span>
+                  )}
+                </span>
+                <span className="block text-[14px] leading-[1.75] wrap-anywhere whitespace-pre-wrap selection:bg-foreground/15">
                   {turn.text}
-                </p>
+                </span>
+              </>
+            )
+            return (
+              <li
+                key={turn.seq}
+                ref={isCurrent ? currentRow : undefined}
+                aria-current={isCurrent ? "time" : undefined}
+                className={cn(
+                  "relative",
+                  isCurrent &&
+                    "bg-muted/60 before:absolute before:inset-y-4 before:left-0 before:w-0.5 before:rounded-r before:bg-foreground/40"
+                )}
+              >
+                {seekTo ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={seekTo}
+                    aria-label={`Seek to ${offsetLabel(offset!)}: ${speakers[turn.role]}. ${turn.text}`}
+                    title="Seek to this turn"
+                    className="block h-auto w-full rounded-none border-0 px-5 py-4 text-left font-normal whitespace-normal select-text focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-ring active:not-aria-[haspopup]:translate-y-0 motion-reduce:transition-none"
+                  >
+                    {content}
+                  </Button>
+                ) : (
+                  <div className="px-5 py-4">{content}</div>
+                )}
               </li>
             )
           })}

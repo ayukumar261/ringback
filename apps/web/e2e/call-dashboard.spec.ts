@@ -240,13 +240,28 @@ test("recording ranges, transcript seeking, and mobile layout work after reload"
   await expect
     .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
     .toBe(0)
-  await page.getByRole("button", { name: "Seek to 0:02" }).click()
+  await page
+    .getByText("Yes, the appointment is confirmed.", { exact: true })
+    .click()
   await expect
     .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
     .toBe(2)
   await expect(page.locator('li[aria-current="time"]')).toContainText(
     "Yes, the appointment is confirmed."
   )
+  expect(await audio.evaluate((el: HTMLAudioElement) => el.paused)).toBe(true)
+  const firstTurn = page.getByRole("button", { name: /^Seek to 0:00:/ })
+  await firstTurn.focus()
+  await firstTurn.press("Enter")
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBe(0)
+  const secondTurn = page.getByRole("button", { name: /^Seek to 0:02:/ })
+  await secondTurn.focus()
+  await secondTurn.press("Space")
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBe(2)
   expect(
     api.requests.some(
       (r) => r.url.endsWith("/audio") && r.cookie.includes(tokens.a) && r.range
@@ -255,6 +270,13 @@ test("recording ranges, transcript seeking, and mobile layout work after reload"
   await page.setViewportSize({ width: 390, height: 844 })
   await page.reload()
   await expect(page.getByText("Transcript for a")).toBeVisible()
+  await expect(secondTurn).toBeVisible()
+  await page
+    .getByText("Yes, the appointment is confirmed.", { exact: true })
+    .click()
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+    .toBe(2)
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth
