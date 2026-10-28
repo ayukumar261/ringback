@@ -1,20 +1,25 @@
 import { Schema } from "effect";
 import type { MongoClient } from "../clients/mongo.js";
 import { applyCallEnded, CallEnded } from "./call-ended.js";
+import { CallSip } from "./call-sip.js";
 import { applyCallStarted, CallStarted } from "./call-started.js";
 import { applyCallTurn, CallTurn } from "./call-turn.js";
 
-export { CallEnded, CallStarted, CallTurn };
+export { CallEnded, CallSip, CallStarted, CallTurn };
 
 // CallStream is the Redis stream key the worker publishes call events to.
 export const CallStream = "ringback:calls";
 
-// CallEvent is every event the worker publishes today.
+// CallEvent is every event the customer's feed carries.
 export const CallEvent = Schema.Union(CallStarted, CallTurn, CallEnded);
 export type CallEvent = typeof CallEvent.Type;
 
-// decodeCallEvent parses one stream entry's fields into a CallEvent.
-export const decodeCallEvent = Schema.decodeUnknown(CallEvent);
+// WorkerEvent is every event the worker publishes, including internal ones.
+export const WorkerEvent = Schema.Union(CallEvent, CallSip);
+export type WorkerEvent = typeof WorkerEvent.Type;
+
+// decodeWorkerEvent parses one stream entry's fields into a WorkerEvent.
+export const decodeWorkerEvent = Schema.decodeUnknown(WorkerEvent);
 
 // applyCallEvent routes one decoded event to its materializer, safe to repeat.
 export const applyCallEvent = (mongo: MongoClient, ev: CallEvent) => {

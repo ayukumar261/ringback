@@ -3,12 +3,14 @@ import type { Redis } from "ioredis";
 import {
   applyCallEvent,
   CallStream,
-  decodeCallEvent,
+  decodeWorkerEvent,
   entryFields,
 } from "../events/index.js";
 import { CallFeed } from "./feed.js";
 import { MongoClient } from "../clients/mongo.js";
 import { RedisClient } from "../clients/redis.js";
+import { environmentConfig, type Environment } from "../environment.js";
+import { captureExpense } from "../expenses/store.js";
 
 const GROUP = "materializer";
 const CONSUMER = "api";
@@ -57,6 +59,7 @@ const processEntries = (
   redis: Redis,
   feed: CallFeed,
   entries: ReadonlyArray<Entry>,
+  environment: Environment,
 ) =>
   Effect.gen(function* () {
     const lastId = entries.at(-1)?.id;
@@ -67,7 +70,7 @@ const processEntries = (
       if (entry.fields === null) {
         continue;
       }
-      const decoded = yield* decodeCallEvent(entryFields(entry.fields)).pipe(
+      const decoded = yield* decodeWorkerEvent(entryFields(entry.fields)).pipe(
         Effect.either,
       );
       if (decoded._tag === "Left") {
@@ -76,6 +79,9 @@ const processEntries = (
         );
         continue;
       }
+      // A failed capture retries the batch, so a provider charge is never dropped.
+      yield* captureExpense(mongo, environment, decoded.right);
+      if (decoded.right.event === "call.sip") continue;
       yield* applyCallEvent(mongo, decoded.right);
       yield* PubSub.publish(feed, { id: entry.id, event: decoded.right });
     }
@@ -92,7 +98,12 @@ const processEntries = (
   });
 
 // recoverPending replays entries delivered to us but never acked before a crash.
-const recoverPending = (mongo: MongoClient, redis: Redis, feed: CallFeed) =>
+const recoverPending = (
+  mongo: MongoClient,
+  redis: Redis,
+  feed: CallFeed,
+  environment: Environment,
+) =>
   Effect.gen(function* () {
     for (;;) {
       const entries = toEntries(
@@ -115,7 +126,7 @@ const recoverPending = (mongo: MongoClient, redis: Redis, feed: CallFeed) =>
       yield* Effect.logInfo(
         `materializer: recovering ${entries.length} pending entries`,
       );
-      yield* processEntries(mongo, redis, feed, entries);
+      yield* processEntries(mongo, redis, feed, entries, environment);
     }
   });
 
@@ -142,17 +153,18 @@ export const MaterializerLive = Layer.scopedDiscard(
     const base = yield* RedisClient;
     const mongo = yield* MongoClient;
     const feed = yield* CallFeed;
+    const environment = yield* environmentConfig;
     const redis = yield* Effect.acquireRelease(
       Effect.sync(() => base.duplicate()),
       (r) => Effect.sync(() => r.disconnect()),
     );
     const run = Effect.gen(function* () {
       yield* ensureGroup(redis);
-      yield* recoverPending(mongo, redis, feed);
+      yield* recoverPending(mongo, redis, feed, environment);
       yield* Effect.forever(
         readBatch(redis).pipe(
           Effect.flatMap((entries) =>
-            processEntries(mongo, redis, feed, entries),
+            processEntries(mongo, redis, feed, entries, environment),
           ),
         ),
       );

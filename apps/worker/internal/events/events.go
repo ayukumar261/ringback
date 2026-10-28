@@ -38,6 +38,23 @@ type End struct {
 	AudioStartedAt time.Time
 }
 
+// SIP attributes a provider leg before the agent starts, even when setup later fails.
+type SIP struct {
+	Room    string
+	CallSID string
+	At      time.Time
+}
+
+func (p *Publisher) CallSIP(s SIP) {
+	if p == nil {
+		return
+	}
+	p.publish(map[string]any{
+		"event": "call.sip", "room": s.Room, "call_sid": s.CallSID,
+		"at": strconv.FormatInt(s.At.UnixMilli(), 10),
+	})
+}
+
 // Turn roles.
 const (
 	RoleUser  = "user"

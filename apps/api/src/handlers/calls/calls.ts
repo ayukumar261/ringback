@@ -2,7 +2,7 @@ import { Effect, PubSub, Stream } from "effect";
 import type { Redis } from "ioredis";
 import {
   CallStream,
-  decodeCallEvent,
+  decodeWorkerEvent,
   entryFields,
 } from "../../events/index.js";
 import { CallFeed, type FeedEvent } from "../../pipeline/feed.js";
@@ -25,13 +25,15 @@ const replayAfter = (redis: Redis, lastId: string) =>
     });
     const out: FeedEvent[] = [];
     for (const [id, fields] of entries) {
-      const decoded = yield* decodeCallEvent(entryFields(fields)).pipe(
+      const decoded = yield* decodeWorkerEvent(entryFields(fields)).pipe(
         Effect.either,
       );
       if (decoded._tag === "Left") {
         yield* Effect.logWarning(`sse: skipping undecodable entry ${id}`);
         continue;
       }
+      // SIP attribution shares the worker stream but is internal.
+      if (decoded.right.event === "call.sip") continue;
       out.push({ id, event: decoded.right });
     }
     return out;

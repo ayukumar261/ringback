@@ -1,5 +1,9 @@
 import { Config, Effect } from "effect";
-import { MongoClient as MongoDriver, type Collection } from "mongodb";
+import {
+  MongoClient as MongoDriver,
+  type Collection,
+  type Decimal128,
+} from "mongodb";
 import type { Environment } from "../environment.js";
 
 // TermsEdition identifies a preserved, dated edition of the Terms and Conditions.
@@ -109,6 +113,7 @@ export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
       },
     ),
     requests.createIndex({ status: 1, createdAt: 1 }),
+    requests.createIndex({ room: 1 }),
   ]);
 
 // CallDoc is one call, active until its call.ended lands.
@@ -126,6 +131,35 @@ export interface CallDoc {
   audio?: string;
   audioStartedAt?: Date;
 }
+
+// ExpenseDoc is one provider charge, keyed `${type}:${providerReference}`.
+export interface ExpenseDoc {
+  _id: string;
+  environment: Environment;
+  requestId?: string;
+  room?: string;
+  provider: "twilio" | "elevenlabs";
+  type: "lookup_api" | "elastic_sip_trunking" | "elevenlabs_agent";
+  // Twilio call SID, ElevenLabs conversation ID, or a generated ID for a Lookup.
+  providerReference: string;
+  // Exact cents, including fractions. null while pending: unknown is never zero.
+  amountCents: Decimal128 | null;
+  currency: string | null;
+  // estimated uses a published rate; reported is the provider's own price.
+  status: "pending" | "estimated" | "reported";
+  incurredAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  // collection exists only while the collector still has to fetch the price.
+  collection?: { attempts: number; nextAttemptAt: Date; lastError?: string };
+}
+
+// createExpenseIndexes serves the collector's queue and hangup lookups by room.
+export const createExpenseIndexes = (expenses: Collection<ExpenseDoc>) =>
+  Promise.all([
+    expenses.createIndex({ "collection.nextAttemptAt": 1 }, { sparse: true }),
+    expenses.createIndex({ room: 1 }),
+  ]);
 
 // createCallIndexes keeps one doc per room and sorts calls by start time.
 export const createCallIndexes = (calls: Collection<CallDoc>) =>
@@ -174,15 +208,17 @@ export class MongoClient extends Effect.Service<MongoClient>()(
       const meta = db.collection<MetaDoc>("meta");
       const purchases = db.collection<PurchaseDoc>("purchases");
       const requests = db.collection<RequestDoc>("requests");
+      const expenses = db.collection<ExpenseDoc>("expenses");
       yield* Effect.tryPromise(() =>
         Promise.all([
           createCallIndexes(calls),
           createTurnIndexes(turns),
           createPurchaseIndexes(purchases),
           createRequestIndexes(requests),
+          createExpenseIndexes(expenses),
         ]),
       );
-      return { calls, turns, meta, purchases, requests } as const;
+      return { calls, turns, meta, purchases, requests, expenses } as const;
     }),
   },
 ) {}

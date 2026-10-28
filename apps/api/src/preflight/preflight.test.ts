@@ -40,7 +40,34 @@ describe("phone preflight", () => {
     expect(
       (await Effect.runPromise(h.client.check("+14155552671"))).country,
     ).toBe("US");
-    expect(h.lookup).toHaveBeenCalledWith("+14155552671");
+    expect(h.lookup).toHaveBeenCalledWith("+14155552671", expect.anything());
+  });
+
+  it("records a billed Lookup against the call request it checked", async () => {
+    const record = vi.fn(() => Effect.void);
+    const check = makePreflight(
+      (number, onBilled = Effect.void) =>
+        onBilled.pipe(
+          Effect.as({
+            number,
+            valid: true,
+            country: "US",
+            lineType: "mobile" as const,
+            lineTypeError: null,
+            checkedAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+          }),
+        ),
+      settings,
+      record,
+    ).check;
+    await Effect.runPromise(
+      check("+14155552671", { requestId: "request-test", room: "call_test" }),
+    );
+    expect(record).toHaveBeenCalledExactlyOnceWith({
+      requestId: "request-test",
+      room: "call_test",
+    });
   });
 
   it.each([

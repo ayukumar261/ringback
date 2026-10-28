@@ -47,6 +47,38 @@ const gatedLog = () => {
 };
 
 describe("events", () => {
+  it("excludes internal SIP attribution from replay", async () => {
+    const { log, release, xrangeCalled } = gatedLog();
+    const out = await Effect.runPromise(
+      Effect.gen(function* () {
+        const feed = yield* CallFeed;
+        const fiber = yield* events(log, feed, "1-0").pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.fork,
+        );
+        yield* Effect.promise(() => xrangeCalled);
+        release([
+          [
+            "2-0",
+            [
+              "event",
+              "call.sip",
+              "room",
+              "call-a",
+              "call_sid",
+              "private-provider-id",
+              "at",
+              "1",
+            ],
+          ],
+          ["3-0", startedFields("call-a", 2)],
+        ]);
+        return Chunk.toReadonlyArray(yield* Fiber.join(fiber));
+      }).pipe(Effect.provide(CallFeed.Default)),
+    );
+    expect(out).toEqual([{ id: "3-0", event: started("call-a", 2) }]);
+  });
   it("replays entries after Last-Event-ID, then follows live without duplicates", async () => {
     const { log, starts, release, xrangeCalled } = gatedLog();
     const out = await Effect.runPromise(

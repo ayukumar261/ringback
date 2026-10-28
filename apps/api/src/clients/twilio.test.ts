@@ -50,6 +50,29 @@ const harness = () => {
 };
 
 describe("Twilio Lookup", () => {
+  it("runs onBilled for a fresh billable Lookup, never for a cache hit", async () => {
+    const h = harness();
+    const onBilled = vi.fn();
+    await Effect.runPromise(h.client.lookup(number, Effect.sync(onBilled)));
+    await Effect.runPromise(h.client.lookup(number, Effect.sync(onBilled)));
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(onBilled).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an invalid number", { valid: false, line_type_intelligence: null }],
+    [
+      "a line-type error",
+      { line_type_intelligence: { type: null, error_code: 60600 } },
+    ],
+  ])("doesn't run onBilled for %s", async (_, changes) => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(Response.json(response(changes)));
+    const onBilled = vi.fn();
+    await Effect.runPromise(h.client.lookup(number, Effect.sync(onBilled)));
+    expect(onBilled).not.toHaveBeenCalled();
+  });
+
   it("authenticates with Account SID/Auth Token and requests current line-type data", async () => {
     const h = harness();
     const result = await Effect.runPromise(h.client.lookup(number));
@@ -206,6 +229,81 @@ describe("Twilio Lookup", () => {
   });
 });
 
+describe("Twilio call price", () => {
+  const sid = `CA${"1".repeat(32)}`;
+
+  it("reads a call's status and price with the account's credentials", async () => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(
+      Response.json({
+        sid,
+        status: "completed",
+        price: "-0.0085",
+        price_unit: "USD",
+      }),
+    );
+    expect(await Effect.runPromise(h.client.getCall(sid))).toEqual({
+      status: "completed",
+      price: "-0.0085",
+      price_unit: "USD",
+    });
+    const [url, init] = h.fetch.mock.calls[0]!;
+    expect(String(url)).toBe(
+      `https://api.twilio.com/2010-04-01/Accounts/AC_test/Calls/${sid}.json`,
+    );
+    expect(init).toMatchObject({
+      headers: {
+        Authorization: `Basic ${Buffer.from("AC_test:private_token").toString("base64")}`,
+      },
+      redirect: "error",
+    });
+  });
+
+  it("reads a call Twilio hasn't priced yet as a null price", async () => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(Response.json({ status: "in-progress" }));
+    expect(await Effect.runPromise(h.client.getCall(sid))).toEqual({
+      status: "in-progress",
+      price: null,
+      price_unit: null,
+    });
+  });
+
+  it("reports HTTP failures by status, without the response body", async () => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(
+      new Response("private-provider-error", { status: 404 }),
+    );
+    const error = await Effect.runPromise(
+      h.client.getCall(sid).pipe(Effect.flip),
+    );
+    expect(error.code).toBe("http_404");
+    expect(JSON.stringify(error)).not.toContain("private");
+  });
+
+  it("rejects a price that isn't decimal dollars", async () => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(
+      Response.json({ status: "completed", price: "NaN", price_unit: "USD" }),
+    );
+    expect(
+      (await Effect.runPromise(h.client.getCall(sid).pipe(Effect.flip))).code,
+    ).toBe("invalid_response");
+  });
+
+  it("refuses without credentials", async () => {
+    const h = harness();
+    const client = makeTwilioClient({
+      ...h.options,
+      authToken: Redacted.make(""),
+    });
+    expect(
+      (await Effect.runPromise(client.getCall(sid).pipe(Effect.flip))).code,
+    ).toBe("not_configured");
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+});
+
 it("loads redacted credentials and bounded cache/timeout configuration", async () => {
   const load = (values: [string, string][]) =>
     Effect.runPromise(
@@ -220,7 +318,7 @@ it("loads redacted credentials and bounded cache/timeout configuration", async (
     ["TWILIO_AUTH_TOKEN", "secret"],
   ]);
   expect(config.timeoutMs).toBe(5_000);
-  expect(config.cacheTtlSeconds).toBe(3_600);
+  expect(config.cacheTtlSeconds).toBe(86_400);
   expect(JSON.stringify(config)).not.toMatch(/AC_private|secret/);
   for (const setting of [
     "RINGBACK_LOOKUP_TIMEOUT_MS",

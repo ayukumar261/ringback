@@ -16,10 +16,11 @@ const (
 
 // Caller is what the SIP participant says about the call.
 type Caller struct {
-	From      string // caller's number, empty if hidden
-	To        string // dialed number, empty likewise
-	Direction string // DirectionInbound or DirectionOutbound
-	Prompt    string // the placer's prompt, verbatim, empty on inbound
+	From          string // caller's number, empty if hidden
+	To            string // dialed number, empty likewise
+	Direction     string // DirectionInbound or DirectionOutbound
+	Prompt        string // the placer's prompt, verbatim, empty on inbound
+	TwilioCallSID string // Twilio's ID for the SIP leg, which prices it
 }
 
 // Caller reports the call's numbers, direction, and prompt, all empty until a SIP participant is visible.
@@ -29,16 +30,33 @@ func (r *Room) Caller() Caller {
 			return caller(attrs)
 		}
 	}
-	return Caller{}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastCaller
 }
 
 // caller maps one SIP participant's attributes to a Caller; anything but an explicit outbound reads as inbound.
 func caller(attrs map[string]string) Caller {
-	c := Caller{Prompt: attrs[AttrPrompt]}
+	c := Caller{Prompt: attrs[AttrPrompt], TwilioCallSID: attrs["sip.twilio.callSid"]}
 	if attrs[AttrDirection] == DirectionOutbound {
 		c.From, c.To, c.Direction = attrs[livekit.AttrSIPTrunkNumber], attrs[livekit.AttrSIPPhoneNumber], DirectionOutbound
 		return c
 	}
 	c.From, c.To, c.Direction = attrs[livekit.AttrSIPPhoneNumber], attrs[livekit.AttrSIPTrunkNumber], DirectionInbound
 	return c
+}
+
+// rememberCaller preserves attribution after the participant has left, including unanswered calls.
+func (r *Room) rememberCaller(attrs map[string]string) {
+	if attrs[livekit.AttrSIPCallID] == "" && attrs["sip.twilio.callSid"] == "" {
+		return
+	}
+	c := caller(attrs)
+	r.mu.Lock()
+	previous := r.lastCaller
+	r.lastCaller = c
+	r.mu.Unlock()
+	if r.onSIP != nil && c.TwilioCallSID != "" && c != previous {
+		r.onSIP(c)
+	}
 }

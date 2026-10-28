@@ -370,7 +370,10 @@ describe("checkout", () => {
         const response = await h.http(route)(request(JSON.stringify(input)));
         expect(response.status).toBe(status);
         expect(await response.json()).toEqual({ error: code });
-        expect(h.check).toHaveBeenCalledWith(input.to);
+        expect(h.check).toHaveBeenCalledWith(input.to, {
+          requestId: expect.any(String),
+          room: expect.stringMatching(/^call_/),
+        });
         expect(mongo.requests.insertOne).not.toHaveBeenCalled();
         expect(h.createSession).not.toHaveBeenCalled();
         expect(h.ready).not.toHaveBeenCalled();
@@ -405,7 +408,10 @@ describe("checkout", () => {
       await expect(
         h.run(createCallRequest(input, "retry", { accessToken })),
       ).rejects.toThrow("unsupported_line_type");
-      expect(h.check).toHaveBeenCalledWith(input.to);
+      expect(h.check).toHaveBeenCalledWith(input.to, {
+        requestId: "request-test",
+        room: "call_request-test",
+      });
       expect(h.createSession).not.toHaveBeenCalled();
     });
 

@@ -160,6 +160,7 @@ export const createCallRequest = (
       ? hash(["call", environment, idempotencyKey])
       : undefined;
     const id = randomUUID();
+    const room = `call_${id}`;
     return yield* Effect.gen(function* () {
       const inputHash = hash(clean);
       const findExisting = () =>
@@ -177,7 +178,8 @@ export const createCallRequest = (
         // A read token is never a credential to create a new call.
         if (credentials.accessToken)
           return yield* new PaymentError({ code: "conflict" });
-        yield* preflight.check(clean.to);
+        // If a concurrent retry wins the insert, this Lookup keeps the losing ID.
+        yield* preflight.check(clean.to, { requestId: id, room });
         checked = true;
         yield* dialer.ready;
         const now = new Date();
@@ -218,7 +220,7 @@ export const createCallRequest = (
           access: newCallAccess(token, now),
           ...(keyHash && { retry: { keyHash, ...(recovery && { recovery }) } }),
           status: "unpaid",
-          room: `call_${id}`,
+          room,
           dashboardUrl: `${settings.publicWebUrl}/call/${id}`,
         };
         yield* Effect.tryPromise({
@@ -255,7 +257,11 @@ export const createCallRequest = (
       if (record.expiresAt.getTime() < Date.now() + 30 * 60_000)
         return yield* new PaymentError({ code: "conflict" });
       // An authorized retry can resume a saved request whose Checkout creation failed.
-      if (!checked) yield* preflight.check(record.to);
+      if (!checked)
+        yield* preflight.check(record.to, {
+          requestId: record._id,
+          room: record.room,
+        });
       const { accountId, session } = yield* stripe.createSession({
         requestId: record._id,
         requestSnapshotHash: digest,

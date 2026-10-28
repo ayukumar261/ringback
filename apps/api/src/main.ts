@@ -16,6 +16,8 @@ import { DispatchLive } from "./pipeline/dispatch.js";
 import { TwilioClient } from "./clients/twilio.js";
 import { PreflightConfig } from "./preflight/config.js";
 import { Preflight } from "./preflight/preflight.js";
+import { ElevenLabsClient } from "./clients/elevenlabs.js";
+import { ExpenseCollectorLive } from "./pipeline/collector.js";
 
 const ServerLive = NodeHttpServer.layerConfig(() => createServer(), {
   port: Config.integer("PORT").pipe(Config.withDefault(3001)),
@@ -49,7 +51,12 @@ const HttpLive = Layer.unwrapEffect(
   ),
 ).pipe(Layer.provide(ServerLive));
 
-const AppLive = Layer.mergeAll(HttpLive, MaterializerLive, DispatchLive).pipe(
+const AppLive = Layer.mergeAll(
+  HttpLive,
+  MaterializerLive,
+  DispatchLive,
+  ExpenseCollectorLive,
+).pipe(
   Layer.provide(Preflight.Default),
   Layer.provide(
     Layer.mergeAll(
@@ -67,6 +74,7 @@ const AppLive = Layer.mergeAll(HttpLive, MaterializerLive, DispatchLive).pipe(
       LiveKitClient.Default,
       CallFeed.Default,
       StripeClient.Default,
+      ElevenLabsClient.Default,
     ),
   ),
 );

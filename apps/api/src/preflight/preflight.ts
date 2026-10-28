@@ -5,17 +5,32 @@ import {
   type PhoneLookup,
   type TwilioError,
 } from "../clients/twilio.js";
+import { MongoClient } from "../clients/mongo.js";
+import { environmentConfig } from "../environment.js";
+import { recordLookup, type ExpenseAttribution } from "../expenses/store.js";
 import { PreflightConfig } from "./config.js";
 import { PreflightError } from "./errors.js";
 
 type Settings = Omit<PreflightConfig, "_tag">;
-type Lookup = (number: string) => Effect.Effect<PhoneLookup, TwilioError>;
+type Lookup = (
+  number: string,
+  onBilled?: Effect.Effect<void>,
+) => Effect.Effect<PhoneLookup, TwilioError>;
+type RecordLookup = (attribution: ExpenseAttribution) => Effect.Effect<void>;
 
 // NANP toll-free is shared by multiple countries; it has its own opt-in policy.
 const tollFree = /^\+1(?:800|833|844|855|866|877|888)/;
 
-export const makePreflight = (lookup: Lookup, settings: Settings) => ({
-  check: (number: string): Effect.Effect<PhoneLookup, PreflightError> =>
+export const makePreflight = (
+  lookup: Lookup,
+  settings: Settings,
+  record: RecordLookup = () => Effect.void,
+) => ({
+  // attribution links a billed Lookup's expense to the call request it checked.
+  check: (
+    number: string,
+    attribution: ExpenseAttribution = {},
+  ): Effect.Effect<PhoneLookup, PreflightError> =>
     Effect.gen(function* () {
       if (!/^\+[1-9]\d{6,14}$/.test(number))
         return yield* new PreflightError({ code: "invalid_destination" });
@@ -42,7 +57,7 @@ export const makePreflight = (lookup: Lookup, settings: Settings) => ({
           settings.territories.includes(country));
       if (!sharedTollFree && !allowed(phone.country))
         return yield* new PreflightError({ code: "unsupported_country" });
-      const result = yield* lookup(number).pipe(
+      const result = yield* lookup(number, record(attribution)).pipe(
         Effect.mapError((e) => new PreflightError({ code: e.code })),
       );
       if (!result.valid || result.number !== number)
@@ -70,6 +85,10 @@ export class Preflight extends Effect.Service<Preflight>()("api/Preflight", {
   effect: Effect.gen(function* () {
     const client = yield* TwilioClient;
     const settings = yield* PreflightConfig;
-    return makePreflight(client.lookup, settings);
+    const mongo = yield* MongoClient;
+    const environment = yield* environmentConfig;
+    return makePreflight(client.lookup, settings, (attribution) =>
+      recordLookup(mongo, environment, attribution),
+    );
   }),
 }) {}

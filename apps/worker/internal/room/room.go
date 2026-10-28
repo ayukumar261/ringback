@@ -33,6 +33,7 @@ type Opts struct {
 	Identity  string // empty means ringback-worker
 	AudioDir  string // empty means no recording
 	Log       *slog.Logger
+	OnSIP     func(Caller) // captures provider attribution as soon as it becomes visible
 }
 
 // Room is one live call's LiveKit connection.
@@ -58,6 +59,8 @@ type Room struct {
 	claimed     bool
 	answeredSet bool
 	rtrack      *webrtc.TrackRemote
+	lastCaller  Caller
+	onSIP       func(Caller)
 }
 
 // Join connects to one room, publishes the agent track, and starts bridging audio.
@@ -94,11 +97,13 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		answered:  make(chan struct{}),
 		ctx:       rctx,
 		cancel:    cancel,
+		onSIP:     opts.OnSIP,
 	}
 
 	cb := &lksdk.RoomCallback{
 		OnDisconnectedWithReason:  r.onDisconnected,
 		OnParticipantDisconnected: r.onParticipantDisconnected,
+		OnParticipantConnected:    func(rp *lksdk.RemoteParticipant) { r.rememberCaller(rp.Attributes()) },
 		OnReconnecting:            func() { log.Info("room reconnecting") },
 		OnReconnected:             func() { log.Info("room reconnected") },
 		ParticipantCallback: lksdk.ParticipantCallback{
@@ -117,6 +122,9 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		return nil, fmt.Errorf("room: connect: %w", err)
 	}
 	r.room = lkroom
+	for _, rp := range lkroom.GetRemoteParticipants() {
+		r.rememberCaller(rp.Attributes())
+	}
 	if opts.AudioDir != "" {
 		w, err := wav.NewWriter(filepath.Join(opts.AudioDir, opts.RoomName+".wav"), audio.SampleRate, 2)
 		if err != nil {
@@ -274,6 +282,7 @@ func (r *Room) onTrackSubscribed(track *webrtc.TrackRemote, _ *lksdk.RemoteTrack
 
 // onParticipantDisconnected treats the caller leaving as the end of the call.
 func (r *Room) onParticipantDisconnected(rp *lksdk.RemoteParticipant) {
+	r.rememberCaller(rp.Attributes())
 	r.log.Info("participant disconnected", "identity", rp.Identity())
 	r.terminate(nil)
 }

@@ -162,6 +162,20 @@ func TestNilPublisherPublishesNothing(t *testing.T) {
 	p.CallStarted(Start{Room: "call-a"})
 	p.CallTurn(Turn{Room: "call-a", Seq: 1})
 	p.CallEnded(End{Room: "call-a"})
+	p.CallSIP(SIP{Room: "call-a"})
+}
+
+func TestCallSIPBeforeAgentStartup(t *testing.T) {
+	fake := &fakeXAdder{}
+	New(fake, nil).CallSIP(SIP{Room: "call-a", CallSID: "CA-leg", At: time.UnixMilli(123)})
+	values := fake.args[0].Values.(map[string]any)
+	want := map[string]any{"event": "call.sip", "room": "call-a", "call_sid": "CA-leg", "at": "123"}
+	if !maps.Equal(values, want) {
+		t.Fatalf("SIP event = %v, want %v", values, want)
+	}
+	if _, exists := values["conversation_id"]; exists {
+		t.Fatal("SIP attribution requires an agent conversation")
+	}
 }
 
 func TestPublishFailureIsDropped(t *testing.T) {

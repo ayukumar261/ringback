@@ -3,19 +3,20 @@ import { describe, expect, it } from "vitest";
 import type { MongoClient } from "../clients/mongo.js";
 import {
   applyCallEvent,
-  type CallEvent,
-  decodeCallEvent,
+  type WorkerEvent,
+  decodeWorkerEvent,
   entryFields,
 } from "./index.js";
 
 // decode runs the schema synchronously, keeping failures as values.
 const decode = (fields: Record<string, string>) =>
-  Effect.runSync(Effect.either(decodeCallEvent(fields)));
+  Effect.runSync(Effect.either(decodeWorkerEvent(fields)));
 
 // Apply either collection's update without depending on its driver result type.
-const apply = (mongo: MongoClient, event: CallEvent) =>
+const apply = (mongo: MongoClient, event: WorkerEvent) =>
   Effect.runPromise(
     Effect.gen(function* () {
+      if (event.event === "call.sip") throw new Error("call.sip has no record");
       yield* applyCallEvent(mongo, event);
     }),
   );
@@ -41,7 +42,7 @@ describe("entryFields", () => {
   });
 });
 
-describe("decodeCallEvent", () => {
+describe("decodeWorkerEvent", () => {
   it("decodes call.started, parsing the timestamp", () => {
     const ev = decode({
       event: "call.started",
@@ -253,6 +254,26 @@ describe("decodeCallEvent", () => {
 
   it("rejects a non-numeric timestamp", () => {
     const ev = decode({ event: "call.started", room: "r1", started_at: "x" });
+    expect(Either.isLeft(ev)).toBe(true);
+  });
+
+  it("decodes call.sip, parsing the timestamp", () => {
+    const ev = decode({
+      event: "call.sip",
+      room: "r1",
+      call_sid: "CA1",
+      at: "1722300000000",
+    });
+    expect(Either.getOrThrow(ev)).toEqual({
+      event: "call.sip",
+      room: "r1",
+      call_sid: "CA1",
+      at: 1722300000000,
+    });
+  });
+
+  it("rejects call.sip without a call SID", () => {
+    const ev = decode({ event: "call.sip", room: "r1", call_sid: "", at: "1" });
     expect(Either.isLeft(ev)).toBe(true);
   });
 });

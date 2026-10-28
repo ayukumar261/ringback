@@ -42,10 +42,23 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		RoomName:  roomName,
 		AudioDir:  opts.AudioDir,
 		Log:       log,
+		OnSIP: func(c room.Caller) {
+			opts.Events.CallSIP(events.SIP{Room: roomName, CallSID: c.TwilioCallSID, At: time.Now()})
+		},
 	})
 	if err != nil {
 		return setupErr(ctx, err)
 	}
+	joinedAt := time.Now()
+	agentStarted := false
+	defer func() {
+		if rm.Caller().TwilioCallSID == "" {
+			log.Warn("no Twilio call SID; SIP cost isn't tracked")
+		}
+		if !agentStarted {
+			opts.Events.CallEnded(events.End{Room: roomName, At: time.Now(), Duration: time.Since(joinedAt), Audio: rm.AudioFile(), AudioStartedAt: rm.StartedAt()})
+		}
+	}()
 	if err := rm.WaitForAnswer(ctx); err != nil {
 		rm.Close()
 		if errors.Is(err, room.ErrNotAnswered) {
@@ -63,6 +76,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	}
 
 	start := time.Now()
+	agentStarted = true
 	log = log.With("conversation", conv.ID())
 	log.Info("session started", "direction", c.Direction, "prompt_len", len(c.Prompt))
 	opts.Events.CallStarted(events.Start{

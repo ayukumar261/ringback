@@ -79,3 +79,24 @@ func TestCaller(t *testing.T) {
 		})
 	}
 }
+
+func TestRememberCallerPreservesProviderAttribution(t *testing.T) {
+	var captured []Caller
+	r := &Room{onSIP: func(c Caller) { captured = append(captured, c) }}
+	attrs := map[string]string{
+		livekit.AttrSIPCallID: "livekit-call", "sip.twilio.callSid": "CA-provider-call", AttrDirection: DirectionOutbound,
+	}
+	r.rememberCaller(attrs)
+	r.rememberCaller(attrs)
+	if len(captured) != 1 || captured[0].TwilioCallSID != "CA-provider-call" {
+		t.Fatalf("captured attribution = %+v", captured)
+	}
+	// The snapshot survives participant removal.
+	if r.lastCaller.TwilioCallSID != "CA-provider-call" {
+		t.Fatalf("retained caller = %+v", r.lastCaller)
+	}
+	r.rememberCaller(map[string]string{livekit.AttrSIPCallID: "other-call"})
+	if len(captured) != 1 {
+		t.Fatal("published a SIP identity without a Twilio reference")
+	}
+}

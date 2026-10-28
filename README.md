@@ -117,7 +117,7 @@ Destination configuration (see the API's `.env.example` for defaults):
 | `RINGBACK_ALLOWED_LINE_TYPES` | `landline,mobile,fixedVoip,nonFixedVoip` | Allowed voice line types. Premium, shared-cost, personal, voicemail, pager, and universal-access types are unsupported. |
 | `RINGBACK_ALLOW_NANP_TOLL_FREE` | `false` | Explicit opt-in to shared NANP toll-free numbers, independent of country attribution; Lookup must classify them as toll-free. |
 | `RINGBACK_BLOCKED_PHONE_PREFIXES` | empty | Additional comma-separated E.164 prefixes identified as high risk; these only restrict calling. |
-| `RINGBACK_LOOKUP_CACHE_TTL_SECONDS` | `3600` | Successful known results expire after this many seconds (maximum 86400), including when Redis retains an old entry. |
+| `RINGBACK_LOOKUP_CACHE_TTL_SECONDS` | `86400` | Successful known results expire after this many seconds (maximum 86400), including when Redis retains an old entry. |
 | `RINGBACK_LOOKUP_TIMEOUT_MS` | `5000` | Lookup request timeout, bounded to 1–30000 milliseconds. Cache reads/writes have separate short timeouts and are best effort. |
 
 The [Twilio Line Type Intelligence documentation](https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence) describes the paid Lookup package. Canada and other non-US NANP destinations return `422 unsupported_country` before Lookup, so Canadian NPAC access is not needed. Missing or unknown US line-type data returns `503 line_type_unavailable`; a provider timeout or invalid response returns `503 lookup_unavailable`; authentication failure returns `503 lookup_access_denied`.
@@ -350,6 +350,20 @@ curl -N http://localhost:3001/call/<call_id>/events \
 The feed supports `Last-Event-ID` to replay missed events still retained in Redis. Both replay and live updates include only the authorized call. A `ready` event indicates that the live subscription is attached; clients should refresh snapshots then, including after reconnects, to reconcile events missed before subscription or no longer retained in Redis. Timestamps use Unix milliseconds. Transcript roles are `user`, `agent`, and `tool`; a repeated `(room, seq)` updates an existing turn. The private `call.ended` event reports `audio_available` instead of a filesystem name. An `access.unavailable` event ends the feed when the server can no longer authorize access.
 
 Only verified payment can make a request eligible to dial. The read token grants access to one call's results and does not grant operational controls.
+
+## Expense tracking
+
+The API saves provider spending in MongoDB's `expenses` collection, one document per charge, linked to its call request and room when known:
+
+| `type`                 | Charge                        | Amount                                                |
+| ---------------------- | ----------------------------- | ----------------------------------------------------- |
+| `lookup_api`           | Each billed Twilio Lookup     | `estimated` at Twilio's published 0.8 cents ($0.008)  |
+| `elastic_sip_trunking` | The call's Twilio SIP leg     | `reported` from Twilio's Calls API after hangup       |
+| `elevenlabs_agent`     | The call's ElevenLabs session | `reported` from the conversation's total after hangup |
+
+`amountCents` is exact cents as Decimal128, keeping fractions of a cent. It stays `null` while `pending`; an unknown amount is never zero. Lookup results cached in Redis for 24 hours by default (`RINGBACK_LOOKUP_CACHE_TTL_SECONDS=86400`) cost nothing and add no expense. Lookups for rejected or abandoned requests are kept.
+
+A background collector fetches the SIP and ElevenLabs prices, retrying with backoff until the provider has priced the call. Set `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`, and an `ELEVENLABS_API_KEY` that can read the worker's conversations. Calls with no Twilio call SID or ElevenLabs conversation ID are logged and not tracked. SIP attribution events never reach the customer's live feed.
 
 ## Development commands
 

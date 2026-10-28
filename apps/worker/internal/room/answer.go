@@ -48,7 +48,10 @@ func waitForAnswer(ctx context.Context, answered, done <-chan struct{}, roomErr 
 }
 
 // onAttributesChanged watches SIP call status changes for the answer gate.
-func (r *Room) onAttributesChanged(changed map[string]string, _ lksdk.Participant) {
+func (r *Room) onAttributesChanged(changed map[string]string, participant lksdk.Participant) {
+	if participant != nil {
+		r.rememberCaller(participant.Attributes())
+	}
 	status := changed[livekit.AttrSIPCallStatus]
 	if status == "" {
 		return

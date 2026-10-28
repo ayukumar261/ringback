@@ -39,6 +39,19 @@ export class TwilioError extends Data.TaggedError("TwilioError")<{
   }
 }
 
+// TwilioCallError says why a call couldn't be read, without Twilio's response body.
+export class TwilioCallError extends Data.TaggedError("TwilioCallError")<{
+  code:
+    | "not_configured"
+    | "unavailable"
+    | "invalid_response"
+    | `http_${number}`;
+}> {
+  override get message() {
+    return this.code;
+  }
+}
+
 const LookupResponse = Schema.Struct({
   phone_number: Schema.NullOr(Schema.String),
   valid: Schema.Boolean,
@@ -60,6 +73,20 @@ const LookupResponse = Schema.Struct({
   ),
 });
 
+// TwilioCall is the part of a Calls API resource that prices a call leg.
+export const TwilioCall = Schema.Struct({
+  status: Schema.String,
+  // Twilio reports a charge as negative decimal dollars, e.g. "-0.0085".
+  price: Schema.optionalWith(
+    Schema.NullOr(Schema.String.pipe(Schema.pattern(/^-?\d+(?:\.\d+)?$/))),
+    { default: () => null },
+  ),
+  price_unit: Schema.optionalWith(Schema.NullOr(Schema.String), {
+    default: () => null,
+  }),
+});
+export type TwilioCall = typeof TwilioCall.Type;
+
 const positive = (key: string, fallback: number, max: number) =>
   Config.integer(key).pipe(
     Config.withDefault(fallback),
@@ -77,7 +104,11 @@ export const twilioConfig = Config.all({
     Config.withDefault(Redacted.make("")),
   ),
   timeoutMs: positive("RINGBACK_LOOKUP_TIMEOUT_MS", 5_000, 30_000),
-  cacheTtlSeconds: positive("RINGBACK_LOOKUP_CACHE_TTL_SECONDS", 3_600, 86_400),
+  cacheTtlSeconds: positive(
+    "RINGBACK_LOOKUP_CACHE_TTL_SECONDS",
+    86_400,
+    86_400,
+  ),
 });
 
 export const makeTwilioClient = (options: {
@@ -93,11 +124,16 @@ export const makeTwilioClient = (options: {
   const now = options.now ?? Date.now;
   const accountSid = Redacted.value(options.accountSid);
   const token = Redacted.value(options.authToken);
+  const authorization = `Basic ${Buffer.from(`${accountSid}:${token}`).toString("base64")}`;
   // Account and response schema version scope cache entries; keys contain no raw numbers.
   const keyFor = (number: string) =>
     `ringback:lookup:v1:${createHash("sha256").update(`${accountSid}:${number}`).digest("hex")}`;
   return {
-    lookup: (number: string): Effect.Effect<PhoneLookup, TwilioError> =>
+    // onBilled runs once Twilio has charged for fresh line-type data; cache hits are free.
+    lookup: (
+      number: string,
+      onBilled: Effect.Effect<void> = Effect.void,
+    ): Effect.Effect<PhoneLookup, TwilioError> =>
       Effect.gen(function* () {
         if (!accountSid || !token)
           return yield* new TwilioError({ code: "lookup_unavailable" });
@@ -134,9 +170,7 @@ export const makeTwilioClient = (options: {
             );
             url.searchParams.set("Fields", "line_type_intelligence");
             const result = await fetch(url, {
-              headers: {
-                Authorization: `Basic ${Buffer.from(`${accountSid}:${token}`).toString("base64")}`,
-              },
+              headers: { Authorization: authorization },
               signal: AbortSignal.any([
                 signal,
                 AbortSignal.timeout(options.timeoutMs),
@@ -170,6 +204,12 @@ export const makeTwilioClient = (options: {
         );
         if (data.valid && data.phone_number !== number)
           return yield* new TwilioError({ code: "lookup_unavailable" });
+        if (
+          data.valid &&
+          data.line_type_intelligence?.type &&
+          data.line_type_intelligence.error_code === null
+        )
+          yield* onBilled;
         const type = Schema.decodeUnknownEither(LineType)(
           data.line_type_intelligence?.type,
         );
@@ -199,6 +239,45 @@ export const makeTwilioClient = (options: {
           ).pipe(Effect.timeout("250 millis"), Effect.ignore);
         }
         return value;
+      }),
+    // getCall reads a call leg's status and price; Twilio prices it shortly after hangup.
+    getCall: (sid: string): Effect.Effect<TwilioCall, TwilioCallError> =>
+      Effect.gen(function* () {
+        if (!accountSid || !token)
+          return yield* new TwilioCallError({ code: "not_configured" });
+        const response = yield* Effect.tryPromise({
+          try: async (signal) => {
+            const result = await fetch(
+              new URL(
+                `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Calls/${encodeURIComponent(sid)}.json`,
+              ),
+              {
+                headers: { Authorization: authorization },
+                signal,
+                redirect: "error",
+              },
+            );
+            if (!result.ok) {
+              await result.body?.cancel();
+              throw new TwilioCallError({ code: `http_${result.status}` });
+            }
+            return result.json() as Promise<unknown>;
+          },
+          catch: (error) =>
+            error instanceof TwilioCallError
+              ? error
+              : new TwilioCallError({ code: "unavailable" }),
+        }).pipe(
+          Effect.timeoutFail({
+            duration: "10 seconds",
+            onTimeout: () => new TwilioCallError({ code: "unavailable" }),
+          }),
+        );
+        return yield* Schema.decodeUnknown(TwilioCall)(response).pipe(
+          Effect.mapError(
+            () => new TwilioCallError({ code: "invalid_response" }),
+          ),
+        );
       }),
   };
 };

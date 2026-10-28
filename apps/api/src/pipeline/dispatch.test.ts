@@ -238,7 +238,10 @@ describe("paid dispatch", () => {
     const h = harness(mongo);
     h.check.mockReturnValueOnce(Effect.fail(new PreflightError({ code })));
     await h.run(dispatchCall);
-    expect(h.check).toHaveBeenCalledWith(input.to);
+    expect(h.check).toHaveBeenCalledWith(input.to, {
+      requestId: "request-test",
+      room: "call_request-test",
+    });
     expect(h.dial).not.toHaveBeenCalled();
     expect(mongo.requests.updateOne).toHaveBeenCalledWith(
       { _id: "request-test", status: "dialing" },
