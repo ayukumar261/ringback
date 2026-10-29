@@ -26,7 +26,6 @@ export const makePreflight = (
   settings: Settings,
   record: RecordLookup = () => Effect.void,
 ) => ({
-  // attribution links a billed Lookup's expense to the call request it checked.
   check: (
     number: string,
     attribution: ExpenseAttribution = {},

@@ -76,7 +76,6 @@ const LookupResponse = Schema.Struct({
 // TwilioCall is the part of a Calls API resource that prices a call leg.
 export const TwilioCall = Schema.Struct({
   status: Schema.String,
-  // Twilio reports a charge as negative decimal dollars, e.g. "-0.0085".
   price: Schema.optionalWith(
     Schema.NullOr(Schema.String.pipe(Schema.pattern(/^-?\d+(?:\.\d+)?$/))),
     { default: () => null },
@@ -129,7 +128,6 @@ export const makeTwilioClient = (options: {
   const keyFor = (number: string) =>
     `ringback:lookup:v1:${createHash("sha256").update(`${accountSid}:${number}`).digest("hex")}`;
   return {
-    // onBilled runs once Twilio has charged for fresh line-type data; cache hits are free.
     lookup: (
       number: string,
       onBilled: Effect.Effect<void> = Effect.void,
@@ -240,7 +238,6 @@ export const makeTwilioClient = (options: {
         }
         return value;
       }),
-    // getCall reads a call leg's status and price; Twilio prices it shortly after hangup.
     getCall: (sid: string): Effect.Effect<TwilioCall, TwilioCallError> =>
       Effect.gen(function* () {
         if (!accountSid || !token)

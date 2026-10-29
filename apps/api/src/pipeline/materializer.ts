@@ -79,7 +79,6 @@ const processEntries = (
         );
         continue;
       }
-      // A failed capture retries the batch, so a provider charge is never dropped.
       yield* captureExpense(mongo, environment, decoded.right);
       if (decoded.right.event === "call.sip") continue;
       yield* applyCallEvent(mongo, decoded.right);

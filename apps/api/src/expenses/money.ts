@@ -1,7 +1,6 @@
 import { Decimal128 } from "mongodb";
 
-// Money stays exact decimal text until Mongo stores it: floats drift, and
-// Decimal128 can't do arithmetic in JavaScript.
+// parts splits exact decimal text into a coefficient and scale, since floats drift.
 const parts = (value: string): [bigint, number] => {
   const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(value);
   if (!match) throw new Error("invalid_decimal");

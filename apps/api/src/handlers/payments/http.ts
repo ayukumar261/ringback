@@ -178,7 +178,6 @@ export const createCallRequest = (
         // A read token is never a credential to create a new call.
         if (credentials.accessToken)
           return yield* new PaymentError({ code: "conflict" });
-        // If a concurrent retry wins the insert, this Lookup keeps the losing ID.
         yield* preflight.check(clean.to, { requestId: id, room });
         checked = true;
         yield* dialer.ready;

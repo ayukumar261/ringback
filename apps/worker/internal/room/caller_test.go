@@ -91,7 +91,6 @@ func TestRememberCallerPreservesProviderAttribution(t *testing.T) {
 	if len(captured) != 1 || captured[0].TwilioCallSID != "CA-provider-call" {
 		t.Fatalf("captured attribution = %+v", captured)
 	}
-	// The snapshot survives participant removal.
 	if r.lastCaller.TwilioCallSID != "CA-provider-call" {
 		t.Fatalf("retained caller = %+v", r.lastCaller)
 	}

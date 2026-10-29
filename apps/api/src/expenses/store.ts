@@ -14,8 +14,7 @@ const LOOKUP_CENTS = "0.8";
 // Providers price a call after it ends, so the first fetch waits briefly.
 const FIRST_ATTEMPT_MS = 15_000;
 
-// recordLookup saves one billed Lookup at the published rate. A failed write
-// is logged and never fails the call request.
+// recordLookup saves one billed Lookup at the published rate, logging instead of failing.
 export const recordLookup = (
   mongo: MongoClient,
   environment: Environment,
@@ -64,7 +63,6 @@ const queue = (
         { _id: `${charge.type}:${charge.providerReference}` },
         {
           $setOnInsert: {
-            // Inbound calls have no request, so they use this API's environment.
             environment: request?.environment ?? environment,
             ...(request && { requestId: request._id }),
             room,
@@ -123,7 +121,6 @@ export const captureExpense = (
           new Date(event.started_at),
         );
       case "call.ended":
-        // Prices are usually ready at hangup, so skip any remaining backoff.
         yield* Effect.tryPromise(() =>
           mongo.expenses.updateMany(
             { room: event.room, collection: { $exists: true } },

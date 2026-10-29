@@ -29,7 +29,6 @@ const price = (expense: ExpenseDoc) =>
       )
         return null;
       return {
-        // Twilio reports a charge as negative dollars.
         amountCents: dollarsToCents(negate(call.price)),
         currency: call.price_unit.toLowerCase(),
       };
@@ -48,7 +47,6 @@ const price = (expense: ExpenseDoc) =>
 export const collectExpense = Effect.gen(function* () {
   const mongo = yield* MongoClient;
   const now = new Date();
-  // Claiming pushes the next attempt out, so concurrent API processes never share one.
   const expense = yield* Effect.tryPromise(() =>
     mongo.expenses.findOneAndUpdate(
       { "collection.nextAttemptAt": { $lte: now } },

@@ -32,7 +32,6 @@ const replayAfter = (redis: Redis, lastId: string) =>
         yield* Effect.logWarning(`sse: skipping undecodable entry ${id}`);
         continue;
       }
-      // SIP attribution shares the worker stream but is internal.
       if (decoded.right.event === "call.sip") continue;
       out.push({ id, event: decoded.right });
     }

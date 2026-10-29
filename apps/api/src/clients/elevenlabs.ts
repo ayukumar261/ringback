@@ -18,7 +18,6 @@ export const Conversation = Schema.Struct({
   status: Schema.String,
   metadata: Schema.optionalWith(
     Schema.Struct({
-      // The conversation's total cost in US dollars.
       cost_fiat: Schema.optionalWith(
         Schema.NullOr(Schema.Finite.pipe(Schema.nonNegative())),
         { default: () => null },
@@ -42,7 +41,6 @@ export const makeElevenLabsClient = (options: {
   const fetch = options.fetch ?? globalThis.fetch;
   const key = Redacted.value(options.apiKey);
   return {
-    // getConversation reads a conversation's status and cost; ElevenLabs prices it after the call.
     getConversation: (
       id: string,
     ): Effect.Effect<Conversation, ElevenLabsError> =>

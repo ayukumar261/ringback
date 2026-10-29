@@ -132,7 +132,7 @@ export interface CallDoc {
   audioStartedAt?: Date;
 }
 
-// ExpenseDoc is one provider charge, keyed `${type}:${providerReference}`.
+// ExpenseDoc is one provider charge in exact cents; a pending amount is null, never zero.
 export interface ExpenseDoc {
   _id: string;
   environment: Environment;
@@ -140,17 +140,13 @@ export interface ExpenseDoc {
   room?: string;
   provider: "twilio" | "elevenlabs";
   type: "lookup_api" | "elastic_sip_trunking" | "elevenlabs_agent";
-  // Twilio call SID, ElevenLabs conversation ID, or a generated ID for a Lookup.
   providerReference: string;
-  // Exact cents, including fractions. null while pending: unknown is never zero.
   amountCents: Decimal128 | null;
   currency: string | null;
-  // estimated uses a published rate; reported is the provider's own price.
   status: "pending" | "estimated" | "reported";
   incurredAt: Date;
   createdAt: Date;
   updatedAt: Date;
-  // collection exists only while the collector still has to fetch the price.
   collection?: { attempts: number; nextAttemptAt: Date; lastError?: string };
 }
 
