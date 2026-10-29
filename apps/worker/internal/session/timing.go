@@ -84,13 +84,18 @@ func playoutPosition(rm roomHandle) time.Time {
 	return position.Add(rm.Buffered())
 }
 
-// callerSpan joins speech since the previous caller transcript onto the WAV's
-// clock. Taking segments also closes an unfinished utterance at the saved edge.
-func callerSpan(rm roomHandle) (time.Time, time.Time) {
+// callerSpan excludes the previous utterance's tail across an assistant reply.
+func callerSpan(rm roomHandle, previousEnd, replyStart time.Time) (time.Time, time.Time) {
 	segments := rm.Speech()
 	started := rm.StartedAt()
 	if started.IsZero() || len(segments) == 0 {
 		return time.Time{}, time.Time{}
+	}
+	if len(segments) > 1 && !previousEnd.IsZero() && !replyStart.IsZero() &&
+		started.Add(segments[0].Started).Equal(previousEnd) &&
+		!replyStart.Before(previousEnd) &&
+		!started.Add(segments[1].Started).Before(replyStart) {
+		segments = segments[1:]
 	}
 	return started.Add(segments[0].Started), started.Add(segments[len(segments)-1].Ended)
 }

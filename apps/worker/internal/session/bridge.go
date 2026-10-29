@@ -133,7 +133,7 @@ func apply(ev agent.Event, conv agent.Conversation, rm roomHandle, turns *turnLo
 		log.Info("caller barge-in", "event_id", e.EventID)
 	case agent.UserTurn:
 		playout.finish(time.Time{})
-		started, ended := callerSpan(rm)
+		started, ended := callerSpan(rm, turns.lastUser.Ended, playout.started)
 		turns.user(e.Text, started, ended)
 		log.Info("user said", "text", e.Text)
 	case agent.AgentTurn:

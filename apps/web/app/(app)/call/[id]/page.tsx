@@ -828,6 +828,7 @@ function Transcript({
       const start = turnStart(turn)
       if (
         start <= instant &&
+        (turn.ended_at === undefined || instant < turn.ended_at) &&
         (current === undefined || start >= turnStart(current))
       )
         current = turn

@@ -359,6 +359,77 @@ func TestUserTurnClosesOpenSpeechAndDoesNotReuseIt(t *testing.T) {
 	assertSpan(t, (*got)[2], time.Time{}, time.Time{})
 }
 
+func TestUserTurnDoesNotInheritSpeechTailAcrossAgentReply(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	voice := speechTone(5000)
+	recordCallerFrames(rm, voice, nil, 6)
+	applyEvent(agent.UserTurn{Text: "Hello?"})
+	assertSpan(t, (*got)[0], rm.started, rm.started.Add(120*time.Millisecond))
+
+	// The final transcript arrives before the greeting's last audio frames.
+	recordCallerFrames(rm, voice, nil, 1)
+	applyEvent(agent.AgentTurn{Text: "How can I help?", EventID: 1})
+	applyEvent(agent.Audio{PCM: pcmFrames(100), EventID: 1})
+	recordCallerFrames(rm, voice, nil, 4)
+	recordCallerFrames(rm, nil, nil, 250)
+	recordCallerFrames(rm, voice, nil, 15)
+	recordCallerFrames(rm, nil, nil, 20)
+	applyEvent(agent.UserTurn{Text: "Did you get that?"})
+	last := (*got)[len(*got)-1]
+	assertSpan(t, last, rm.started.Add(5188*time.Millisecond), rm.started.Add(5520*time.Millisecond))
+}
+
+func TestUserTurnKeepsBargeInAfterPreviousUtteranceTail(t *testing.T) {
+	rm := speechRoom()
+	applyEvent, got := timingDriver(t, rm)
+	voice := speechTone(5000)
+	recordCallerFrames(rm, voice, nil, 6)
+	applyEvent(agent.UserTurn{Text: "Hello?"})
+	recordCallerFrames(rm, voice, nil, 1)
+	applyEvent(agent.AgentTurn{Text: "Let me explain", EventID: 1})
+	applyEvent(agent.Audio{PCM: pcmFrames(100), EventID: 1})
+	recordCallerFrames(rm, voice, nil, 4)
+	recordCallerFrames(rm, nil, nil, 20)
+	recordCallerFrames(rm, voice, nil, 5)
+	applyEvent(agent.Interruption{EventID: 2})
+	applyEvent(agent.UserTurn{Text: "Stop"})
+	last := (*got)[len(*got)-1]
+	assertSpan(t, last, rm.started.Add(588*time.Millisecond), rm.started.Add(720*time.Millisecond))
+	if !last.Started.Before((*got)[len(*got)-2].Ended) {
+		t.Fatal("barge-in lost its overlap with the assistant")
+	}
+}
+
+func TestUserTurnTimingFromReportedRecording(t *testing.T) {
+	rm := recordingRoom()
+	applyEvent, got := timingDriver(t, rm)
+	rm.recorded = 9860 * time.Millisecond
+	rm.speech = []speech.Segment{
+		{Started: 7823500 * time.Microsecond, Ended: 8239500 * time.Microsecond},
+		{Started: 8975500 * time.Microsecond, Ended: 9135500 * time.Microsecond},
+		{Started: 9775500 * time.Microsecond, Ended: rm.recorded},
+	}
+	applyEvent(agent.UserTurn{Text: "Hello?"})
+	rm.advance(40 * time.Millisecond)
+	applyEvent(agent.Audio{PCM: pcmFrames(280), EventID: 1})
+	applyEvent(agent.AgentTurn{Text: "What is your favorite color?", EventID: 1})
+	rm.advance(20400 * time.Millisecond)
+	rm.speech = []speech.Segment{
+		{Started: 9860 * time.Millisecond, Ended: 9967500 * time.Microsecond},
+		{Started: 17295500 * time.Microsecond, Ended: 19503500 * time.Microsecond},
+		{Started: 20271500 * time.Microsecond, Ended: 22415500 * time.Microsecond},
+		{Started: 22671500 * time.Microsecond, Ended: 23823500 * time.Microsecond},
+		{Started: 24047500 * time.Microsecond, Ended: 26703500 * time.Microsecond},
+		{Started: 26959500 * time.Microsecond, Ended: 28623500 * time.Microsecond},
+		{Started: 29359500 * time.Microsecond, Ended: 29871500 * time.Microsecond},
+	}
+	applyEvent(agent.UserTurn{Text: "Did you get that?"})
+	assertSpan(t, (*got)[0], rm.started.Add(7823500*time.Microsecond), rm.started.Add(9860*time.Millisecond))
+	assertSpan(t, (*got)[len(*got)-2], rm.started.Add(9900*time.Millisecond), rm.started.Add(15500*time.Millisecond))
+	assertSpan(t, (*got)[len(*got)-1], rm.started.Add(17295500*time.Microsecond), rm.started.Add(29871500*time.Microsecond))
+}
+
 func TestCallerBargeInStartsBeforeAgentEnds(t *testing.T) {
 	rm := speechRoom()
 	applyEvent, got := timingDriver(t, rm)

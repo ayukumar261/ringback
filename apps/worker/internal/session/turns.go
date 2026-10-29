@@ -12,6 +12,7 @@ type turnLog struct {
 	sink      func(events.Turn)
 	now       func() time.Time
 	next      int
+	lastUser  events.Turn
 	lastAgent events.Turn // retained so timing updates and corrections keep the same seq and text
 }
 
@@ -22,9 +23,9 @@ func newTurnLog(room string, sink func(events.Turn)) *turnLog {
 
 // user records what the person on the other end of the call said.
 func (t *turnLog) user(text string, started, ended time.Time) {
-	turn := t.turn(events.RoleUser, text, started)
-	turn.Ended = ended
-	t.emit(turn)
+	t.lastUser = t.turn(events.RoleUser, text, started)
+	t.lastUser.Ended = ended
+	t.emit(t.lastUser)
 }
 
 // agent records what the agent said.
