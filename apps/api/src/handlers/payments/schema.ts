@@ -4,7 +4,7 @@ import type { RequestDoc } from "../../clients/mongo.js";
 import { PaymentError } from "./errors.js";
 
 // TERMS_VERSION matches the preserved public Terms edition used by new checkouts.
-export const TERMS_VERSION = "2026-11-01";
+export const TERMS_VERSION = "2026-10-30";
 
 // PRIVACY_VERSION matches the preserved public Privacy Policy edition used by new checkouts.
 export const PRIVACY_VERSION = "2026-10-30";
@@ -19,11 +19,6 @@ export const callRequestStatus = (
   request.status === "unpaid" && request.expiresAt.getTime() <= Date.now()
     ? "expired"
     : request.status;
-
-// callPaymentStatus reports the call's payment; purchases from before holds were charged at checkout.
-export const callPaymentStatus = (
-  request: Pick<RequestDoc, "payment" | "purchaseId">,
-) => request.payment?.status ?? (request.purchaseId ? "charged" : "unpaid");
 
 // CallInput is the POST /call body, one E.164 destination and the prompt the call runs on.
 export const CallInput = Schema.Struct({

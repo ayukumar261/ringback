@@ -82,23 +82,13 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       changes.requestSnapshotHash ?? requestSnapshotHash(record),
   };
 };
-const intent = (status: Stripe.PaymentIntent.Status) =>
-  ({ id: "pi_test", object: "payment_intent", status }) as Stripe.PaymentIntent;
-const held = {
-  payment_status: "unpaid",
-  payment_intent: intent("requires_capture"),
-} as const;
-const pending = {
-  payment_status: "unpaid",
-  payment_intent: intent("processing"),
-} as const;
 const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
   ({
     id: "cs_test",
     object: "checkout.session",
     mode: "payment",
     status: "complete",
-    ...held,
+    payment_status: "paid",
     consent: { terms_of_service: "accepted", promotions: null },
     livemode: false,
     client_reference_id: "request-test",
@@ -113,6 +103,7 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
+    payment_intent: "pi_test",
     customer_details: {
       name: "Test payer",
       email: "payer@example.com",
@@ -161,12 +152,6 @@ const harness = (
       }),
     createSession: () =>
       Effect.dieMessage("Webhooks must not create Checkout sessions"),
-    capturePayment: () =>
-      Effect.dieMessage("Webhooks must not settle payments"),
-    releasePayment: () =>
-      Effect.dieMessage("Webhooks must not settle payments"),
-    retrievePayment: () =>
-      Effect.dieMessage("Webhooks must not settle payments"),
     verifyEvent: verify,
   });
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -182,7 +167,7 @@ const harness = (
     await mongo.requests.insertOne(record);
     session = sessionFixture({
       status: "open",
-      ...pending,
+      payment_status: "unpaid",
       metadata: {
         request_snapshot_hash: record.requestSnapshotHash,
         terms_version: record.terms.version,
@@ -197,7 +182,7 @@ const harness = (
     const result = await checkout();
     Object.assign(result.session, {
       status: "complete",
-      ...held,
+      payment_status: "paid",
     });
     await run(handleStripeEvent(event(result.session)));
     return result;
@@ -332,13 +317,15 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   it("trusts the session Stripe returns over the event body", async () => {
     const { result, session } = await h.checkout();
     await h.run(
-      handleStripeEvent(event({ ...session, status: "complete", ...held })),
+      handleStripeEvent(
+        event({ ...session, status: "complete", payment_status: "paid" }),
+      ),
     );
     expect(
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
     ).toBe("unpaid");
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.run(handleStripeEvent(event(session)));
     expect(
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
@@ -362,7 +349,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     const { result, session } = await h.checkout();
     Object.assign(session, {
       status: "complete",
-      ...held,
+      payment_status: "paid",
       managed_payments: { enabled: true },
       amount_subtotal: 47,
       amount_total: 50,
@@ -381,14 +368,14 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   });
   it("waits for delayed payment, then fulfills it once despite duplicate and stale events", async () => {
     const { result, session } = await h.checkout();
-    Object.assign(session, { status: "complete", ...pending });
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
     await h.run(handleStripeEvent(event(session)));
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
     expect(
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
     ).toBe("unpaid");
 
-    Object.assign(session, held);
+    session.payment_status = "paid";
     await Promise.all(
       Array.from({ length: 3 }, () =>
         h.run(
@@ -410,7 +397,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   });
   it("records delayed payment failure and recovers only on authoritative payment", async () => {
     const { result, session } = await h.checkout();
-    Object.assign(session, { status: "complete", ...pending });
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
     await h.run(
       handleStripeEvent(
         event(session, "checkout.session.async_payment_failed"),
@@ -433,7 +420,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
     ).toBe("failed");
 
-    Object.assign(session, held);
+    session.payment_status = "paid";
     await h.run(
       handleStripeEvent(
         event(session, "checkout.session.async_payment_succeeded"),
@@ -480,7 +467,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     const original = event(session);
     Object.assign(session, {
       status: "complete",
-      ...held,
+      payment_status: "paid",
       [field]:
         field === "amount_total"
           ? 1
@@ -500,7 +487,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   });
   it("rejects another Stripe account and a mutated request", async () => {
     const { result, session } = await h.checkout();
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     h.retrieveSession.mockResolvedValueOnce({
       accountId: "acct_other",
       session,
@@ -520,7 +507,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     const { session } = await h.checkout();
     Object.assign(session, {
       status: "complete",
-      ...held,
+      payment_status: "paid",
       consent: null,
     });
     await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
@@ -539,11 +526,11 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       url: "https://example.com/terms-and-conditions/2026-09-30",
     };
     const { session } = await h.checkout({ terms });
-    Object.assign(session, { status: "complete", ...pending });
+    Object.assign(session, { status: "complete", payment_status: "unpaid" });
     await h.run(handleStripeEvent(event(session)));
     expect(await h.mongo.purchases.countDocuments()).toBe(0);
 
-    Object.assign(session, held);
+    session.payment_status = "paid";
     session.consent = null;
     const accepted = {
       terms_of_service: "accepted",
@@ -571,7 +558,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     "rejects accepted Terms when Checkout metadata has a different %s",
     async (field) => {
       const { session } = await h.checkout();
-      Object.assign(session, { status: "complete", ...held });
+      Object.assign(session, { status: "complete", payment_status: "paid" });
       session.metadata![field] = "wrong";
       await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
         "conflict",
@@ -588,7 +575,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     const { session } = await h.checkout({ terms });
     Object.assign(session, {
       status: "complete",
-      ...held,
+      payment_status: "paid",
       consent: { terms_of_service: "accepted", promotions: null },
     });
     await h.mongo.requests.updateOne(
@@ -607,7 +594,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       url: "https://example.com/privacy-policy/2026-09-30",
     };
     const { session } = await h.checkout({ privacy });
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.run(handleStripeEvent(event(session)));
     const purchase = await h.mongo.purchases.findOne({});
     expect(purchase?.privacy).toEqual(privacy);
@@ -627,7 +614,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     "rejects a paid Checkout whose metadata has a different %s",
     async (field) => {
       const { session } = await h.checkout();
-      Object.assign(session, { status: "complete", ...held });
+      Object.assign(session, { status: "complete", payment_status: "paid" });
       session.metadata![field] = "wrong";
       await expect(h.run(handleStripeEvent(event(session)))).rejects.toThrow(
         "conflict",
@@ -638,7 +625,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   );
   it("rejects a Privacy Policy edition changed after Checkout was created", async () => {
     const { session } = await h.checkout();
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.mongo.requests.updateOne(
       { _id: session.client_reference_id! },
       {
@@ -659,7 +646,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     expect(
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
     ).toBe("expired");
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     await h.run(handleStripeEvent(event(session)));
     expect(
       (await h.run(readCallRequest(result.call_id, accessToken))).status,
@@ -667,7 +654,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
   });
   it("recovers after purchase persistence succeeds but queue persistence fails", async () => {
     const { result, session } = await h.checkout();
-    Object.assign(session, { status: "complete", ...held });
+    Object.assign(session, { status: "complete", payment_status: "paid" });
     const update = vi
       .spyOn(h.mongo.requests, "updateOne")
       .mockRejectedValueOnce(new Error("connection lost"));

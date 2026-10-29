@@ -1,32 +1,6 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import {
-  callPaymentStatus,
-  checkCallInput,
-  requestSnapshotHash,
-} from "./schema.js";
-
-describe("call payment status", () => {
-  it("is unpaid before checkout completes", () => {
-    expect(callPaymentStatus({})).toBe("unpaid");
-  });
-  it.each(["held", "charged", "released"] as const)(
-    "reports a %s payment",
-    (status) => {
-      expect(
-        callPaymentStatus({
-          purchaseId: "acct_test:live:cs_test",
-          payment: { status, heldAt: new Date() },
-        }),
-      ).toBe(status);
-    },
-  );
-  it("reports purchases from before holds as charged", () => {
-    expect(callPaymentStatus({ purchaseId: "acct_test:live:cs_test" })).toBe(
-      "charged",
-    );
-  });
-});
+import { checkCallInput, requestSnapshotHash } from "./schema.js";
 
 const input = {
   to: "+15551234567",

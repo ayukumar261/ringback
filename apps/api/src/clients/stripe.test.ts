@@ -3,7 +3,6 @@ import Stripe from "stripe";
 import { describe, expect, it, vi } from "vitest";
 import {
   makeStripeClient,
-  sessionPayment,
   StripeClient,
   stripeConfig,
   verifyStripeEvent,
@@ -37,26 +36,14 @@ const sdk = () => {
     async () => ({ id: "cs_test", livemode: false }) as Stripe.Checkout.Session,
   );
   const account = vi.fn(async () => ({ id: "acct_test" }));
-  const intent = (status: Stripe.PaymentIntent.Status) =>
-    vi.fn(
-      async () =>
-        ({ id: "pi_test", livemode: false, status }) as Stripe.PaymentIntent,
-    );
-  const capture = intent("succeeded");
-  const cancel = intent("canceled");
-  const retrieveIntent = intent("requires_capture");
   const stripe = {
     accounts: { retrieveCurrent: account },
     checkout: { sessions: { create, retrieve } },
-    paymentIntents: { capture, cancel, retrieve: retrieveIntent },
   } as unknown as Stripe;
   return {
     create,
     retrieve,
     account,
-    capture,
-    cancel,
-    retrieveIntent,
     client: makeStripeClient(stripe, secret, "development"),
     stripe,
   };
@@ -70,7 +57,6 @@ describe("Stripe client", () => {
       expect.objectContaining({
         mode: "payment",
         managed_payments: { enabled: true },
-        payment_intent_data: { capture_method: "manual" },
         client_reference_id: input.requestId,
         customer_creation: "always",
         metadata: {
@@ -139,68 +125,7 @@ describe("Stripe client", () => {
     expect(
       await Effect.runPromise(s.client.retrieveSession("cs_test")),
     ).toMatchObject({ accountId: "acct_test", session: { id: "cs_test" } });
-    expect(s.retrieve).toHaveBeenCalledWith("cs_test", {
-      expand: ["payment_intent"],
-    });
-  });
-  it("captures and releases each request's hold under one idempotency key", async () => {
-    const s = sdk();
-    expect(
-      await Effect.runPromise(
-        s.client.capturePayment("pi_test", "request-test"),
-      ),
-    ).toMatchObject({ status: "succeeded" });
-    expect(s.capture).toHaveBeenCalledWith(
-      "pi_test",
-      {},
-      { idempotencyKey: "ringback-capture-request-test" },
-    );
-    expect(
-      await Effect.runPromise(
-        s.client.releasePayment("pi_test", "request-test"),
-      ),
-    ).toMatchObject({ status: "canceled" });
-    expect(s.cancel).toHaveBeenCalledWith(
-      "pi_test",
-      { cancellation_reason: "abandoned" },
-      { idempotencyKey: "ringback-release-request-test" },
-    );
-    expect(
-      await Effect.runPromise(s.client.retrievePayment("pi_test")),
-    ).toMatchObject({ status: "requires_capture" });
-  });
-  it("refuses a payment from the other Stripe mode", async () => {
-    const s = sdk();
-    const live = makeStripeClient(s.stripe, secret, "production");
-    for (const effect of [
-      live.capturePayment("pi_test", "request-test"),
-      live.releasePayment("pi_test", "request-test"),
-      live.retrievePayment("pi_test"),
-    ])
-      await expect(Effect.runPromise(effect)).rejects.toThrow("internal");
-  });
-  it("refuses to settle payments without credentials", async () => {
-    const client = makeStripeClient(undefined, secret, "development");
-    await expect(
-      Effect.runPromise(client.capturePayment("pi_test", "request-test")),
-    ).rejects.toThrow("unavailable");
-  });
-  it("keeps only Stripe's request id from a failed capture", async () => {
-    const s = sdk();
-    s.capture.mockRejectedValueOnce(
-      new Stripe.errors.StripeInvalidRequestError({
-        message: "secret billing details",
-        requestId: "req_test",
-      }),
-    );
-    const result = await Effect.runPromise(
-      s.client.capturePayment("pi_test", "request-test").pipe(Effect.flip),
-    );
-    expect(result).toMatchObject({
-      code: "unavailable",
-      providerRequestId: "req_test",
-    });
-    expect(JSON.stringify(result)).not.toContain("secret billing");
+    expect(s.retrieve).toHaveBeenCalledWith("cs_test");
   });
   it("refuses unconfigured credentials and signing secrets before creating a session", async () => {
     const s = sdk();
@@ -422,33 +347,5 @@ describe("Stripe signature verification", () => {
     await expect(
       Effect.runPromise(verifyStripeEvent(Buffer.from(payload), signature, "")),
     ).rejects.toThrow("unavailable");
-  });
-});
-
-describe("session payment", () => {
-  const session = (
-    status: Stripe.Checkout.Session.Status,
-    payment_intent: Stripe.Checkout.Session["payment_intent"],
-  ) => ({ status, payment_intent }) as Stripe.Checkout.Session;
-  const intent = (status: Stripe.PaymentIntent.Status) =>
-    ({ id: "pi_test", status }) as Stripe.PaymentIntent;
-  it("is held while the PaymentIntent awaits capture", () => {
-    expect(
-      sessionPayment(session("complete", intent("requires_capture"))),
-    ).toBe("held");
-  });
-  it("is charged when Checkout already captured the payment", () => {
-    expect(sessionPayment(session("complete", intent("succeeded")))).toBe(
-      "charged",
-    );
-  });
-  it.each([
-    ["an open session", session("open", intent("requires_capture"))],
-    ["a processing payment", session("complete", intent("processing"))],
-    ["a canceled payment", session("complete", intent("canceled"))],
-    ["an unexpanded PaymentIntent", session("complete", "pi_test")],
-    ["no PaymentIntent", session("complete", null)],
-  ])("is neither for %s", (_, value) => {
-    expect(sessionPayment(value)).toBeNull();
   });
 });

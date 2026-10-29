@@ -76,7 +76,6 @@ export function useCall(id: string, onAccessLost: () => void) {
     }
     source.addEventListener("call.started", refresh)
     source.addEventListener("call.ended", refresh)
-    source.addEventListener("call.unanswered", refresh)
     source.addEventListener("call.turn", () => {
       void refreshTurns().catch(() => {})
     })

@@ -191,19 +191,6 @@ describe("decodeWorkerEvent", () => {
     });
   });
 
-  it("decodes call.unanswered, parsing the timestamp", () => {
-    const ev = decode({
-      event: "call.unanswered",
-      room: "r1",
-      ended_at: "1722300030000",
-    });
-    expect(Either.getOrThrow(ev)).toEqual({
-      event: "call.unanswered",
-      room: "r1",
-      ended_at: 1722300030000,
-    });
-  });
-
   it("decodes call.ended without audio", () => {
     const ev = decode({
       event: "call.ended",

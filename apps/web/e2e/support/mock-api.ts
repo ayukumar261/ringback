@@ -14,15 +14,7 @@ export const recordingSeconds = 4
 // Tests set the stage to move the mocked call through its lifecycle.
 export interface MockApi {
   stage:
-    | "unpaid"
-    | "paid"
-    | "dialing"
-    | "active"
-    | "ended"
-    | "unanswered"
-    | "expired"
-    | "failed"
-  payment?: Call["payment_status"]
+    "unpaid" | "paid" | "dialing" | "active" | "ended" | "expired" | "failed"
   revoked: boolean
   checkoutExpiresAt?: string
   turns?: Turn[]
@@ -120,21 +112,10 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
       })
     }
     const { stage } = state
-    const connected = stage === "active" || stage === "ended"
-    const payments = {
-      unpaid: "unpaid",
-      expired: "unpaid",
-      paid: "held",
-      dialing: "held",
-      failed: "held",
-      active: "charged",
-      ended: "charged",
-      unanswered: "released",
-    } as const
+    const dialed = stage === "active" || stage === "ended"
     return reply({
       call_id: id,
-      status: connected || stage === "unanswered" ? "dialed" : stage,
-      payment_status: state.payment ?? payments[stage],
+      status: dialed ? "dialed" : stage,
       dashboard_url: `${web.url}/call/${id}#token=${secret}`,
       to: "+15551234567",
       prompt: `Private task for ${id}`,
@@ -145,7 +126,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
       access_expires_at: expires,
       checkout_expires_at: state.checkoutExpiresAt ?? checkoutExpires,
       checkout_url: stage === "unpaid" ? `${web.url}/checkout` : null,
-      call: connected
+      call: dialed
         ? {
             status: stage,
             started_at: 1000,
@@ -156,14 +137,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
             audio_available: stage === "ended",
             audio_started_at: 1000,
           }
-        : stage === "unanswered"
-          ? {
-              status: "ended",
-              ended_at: 1000,
-              duration_ms: 30_000,
-              audio_available: false,
-            }
-          : null,
+        : null,
     } satisfies Call)
   })
   await context.route("/checkout", async (route) => {

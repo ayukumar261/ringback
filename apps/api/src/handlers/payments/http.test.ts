@@ -43,7 +43,7 @@ import {
   paymentResponse,
   readBody,
   readCall,
-  recordPurchase,
+  recordPaidCheckout,
 } from "./http.js";
 import {
   hash,
@@ -65,8 +65,6 @@ import type { PhoneLookup } from "../../clients/twilio.js";
 
 const accessToken = newAccessToken();
 const creationCredentials = { recoverySecret: newAccessToken() };
-const intent = (status: Stripe.PaymentIntent.Status) =>
-  ({ id: "pi_test", object: "payment_intent", status }) as Stripe.PaymentIntent;
 
 const bodyHandler = HttpApp.toWebHandler(
   paymentResponse(
@@ -298,12 +296,6 @@ describe("checkout", () => {
         }),
       retrieveSession: () =>
         Effect.dieMessage("Checkout must not retrieve a payment"),
-      capturePayment: () =>
-        Effect.dieMessage("Checkout must not settle a payment"),
-      releasePayment: () =>
-        Effect.dieMessage("Checkout must not settle a payment"),
-      retrievePayment: () =>
-        Effect.dieMessage("Checkout must not settle a payment"),
       verifyEvent: () =>
         Effect.dieMessage("Checkout must not verify a webhook"),
     });
@@ -1149,7 +1141,7 @@ describe("purchases", () => {
       object: "checkout.session",
       mode: "payment",
       status: "complete",
-      payment_status: "unpaid",
+      payment_status: "paid",
       consent: { terms_of_service: "accepted", promotions: null },
       livemode: false,
       client_reference_id: "request-test",
@@ -1164,7 +1156,7 @@ describe("purchases", () => {
       },
       url: "https://checkout.stripe.com/test",
       customer: "cus_test",
-      payment_intent: intent("requires_capture"),
+      payment_intent: "pi_test",
       customer_details: {
         name: "Test payer",
         email: "payer@example.com",
@@ -1178,27 +1170,22 @@ describe("purchases", () => {
     it.each([
       { status: "open" },
       { status: "expired" },
-      { payment_intent: intent("requires_payment_method") },
-      { payment_intent: intent("processing") },
-      { payment_intent: intent("canceled") },
-      { payment_intent: "pi_test" },
+      { payment_status: "unpaid" },
+      { payment_status: "no_payment_required" },
       { mode: "subscription" },
-    ] as const)(
-      "refuses sessions without a held payment %j",
-      async (change) => {
-        const mongo = fakeMongo();
-        await expect(
-          Effect.runPromise(
-            recordPurchase(
-              mongo.purchases as unknown as Collection<PurchaseDoc>,
-              { accountId: "acct_test", session: sessionFixture(change) },
-              policies,
-            ),
+    ] as const)("refuses unpaid sessions %j", async (change) => {
+      const mongo = fakeMongo();
+      await expect(
+        Effect.runPromise(
+          recordPaidCheckout(
+            mongo.purchases as unknown as Collection<PurchaseDoc>,
+            { accountId: "acct_test", session: sessionFixture(change) },
+            policies,
           ),
-        ).rejects.toThrow("invalid_request");
-        expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
-      },
-    );
+        ),
+      ).rejects.toThrow("invalid_request");
+      expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
+    });
     it.each([
       "customer",
       "client_reference_id",
@@ -1211,7 +1198,7 @@ describe("purchases", () => {
       Object.assign(session, { [field]: null });
       await expect(
         Effect.runPromise(
-          recordPurchase(
+          recordPaidCheckout(
             mongo.purchases as unknown as Collection<PurchaseDoc>,
             { accountId: "acct_test", session },
             policies,
@@ -1228,7 +1215,7 @@ describe("purchases", () => {
         session.metadata![field] = "wrong";
         await expect(
           Effect.runPromise(
-            recordPurchase(
+            recordPaidCheckout(
               mongo.purchases as unknown as Collection<PurchaseDoc>,
               { accountId: "acct_test", session },
               policies,
@@ -1243,7 +1230,7 @@ describe("purchases", () => {
       async (amount_total) => {
         await expect(
           Effect.runPromise(
-            recordPurchase(
+            recordPaidCheckout(
               fakeMongo().purchases as unknown as Collection<PurchaseDoc>,
               {
                 accountId: "acct_test",
@@ -1281,7 +1268,7 @@ describe("purchases", () => {
     });
     const record = (session = sessionFixture(), accountId = "acct_test") =>
       Effect.runPromise(
-        recordPurchase(mongo.purchases, { accountId, session }, policies),
+        recordPaidCheckout(mongo.purchases, { accountId, session }, policies),
       );
     it("stores only the purchase snapshot, including customer contact details", async () => {
       const purchase = await record();
@@ -1314,11 +1301,11 @@ describe("purchases", () => {
       session.customer_details!.name = "Updated name";
       expect(await record(session)).toEqual(results[0]);
     });
-    it("accepts charged payments, expanded customers, and missing optional contacts", async () => {
+    it("accepts expanded objects and missing optional contacts", async () => {
       const purchase = await record(
         sessionFixture({
           customer: { id: "cus_test" } as Stripe.Customer,
-          payment_intent: intent("succeeded"),
+          payment_intent: { id: "pi_test" } as Stripe.PaymentIntent,
           customer_details: null,
         }),
       );
@@ -1452,7 +1439,6 @@ describe("status", () => {
             ? {
                 status: "dialed",
                 purchaseId: "acct_test:live:cs_test",
-                payment: { status: "held", heldAt: new Date() },
                 dialedAt: new Date(),
               }
             : {},
@@ -1466,7 +1452,6 @@ describe("status", () => {
         expect(await response.json()).toEqual({
           call_id: record._id,
           status: record.status,
-          payment_status: dialed ? "held" : "unpaid",
           room: dialed ? record.room : null,
           error: null,
         });

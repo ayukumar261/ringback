@@ -58,23 +58,7 @@ const providerError = (error: unknown) =>
       error.requestId && { providerRequestId: error.requestId }),
   });
 
-// paymentIntentId reads a Checkout session's PaymentIntent id, expanded or not.
-export const paymentIntentId = (session: Stripe.Checkout.Session) =>
-  typeof session.payment_intent === "string"
-    ? session.payment_intent
-    : session.payment_intent?.id;
-
-// sessionPayment reports whether a completed session's payment is held or already charged.
-export const sessionPayment = (session: Stripe.Checkout.Session) => {
-  const intent = session.payment_intent;
-  if (session.status !== "complete" || !intent || typeof intent === "string")
-    return null;
-  if (intent.status === "requires_capture") return "held";
-  if (intent.status === "succeeded") return "charged";
-  return null;
-};
-
-// makeStripeClient creates and reads Checkout sessions and settles their payments for one environment.
+// makeStripeClient creates and reads Checkout sessions for one environment.
 export const makeStripeClient = (
   stripe: Stripe | undefined,
   webhookSecret: string,
@@ -85,19 +69,6 @@ export const makeStripeClient = (
     result.session.livemode === (environment === "production")
       ? Effect.succeed(result)
       : Effect.fail(new StripeError({ code: "internal" }));
-  const checkIntent = (intent: Stripe.PaymentIntent) =>
-    intent.livemode === (environment === "production")
-      ? Effect.succeed(intent)
-      : Effect.fail(new StripeError({ code: "internal" }));
-  const payment = (
-    call: (stripe: Stripe) => Promise<Stripe.PaymentIntent>,
-  ): Effect.Effect<Stripe.PaymentIntent, StripeError> =>
-    stripe
-      ? Effect.tryPromise({
-          try: () => call(stripe),
-          catch: providerError,
-        }).pipe(Effect.flatMap(checkIntent))
-      : Effect.fail(new StripeError({ code: "unavailable" }));
   return {
     retrieveSession: (
       id: string,
@@ -107,9 +78,7 @@ export const makeStripeClient = (
             try: async () => {
               const [account, session] = await Promise.all([
                 stripe.accounts.retrieveCurrent(),
-                stripe.checkout.sessions.retrieve(id, {
-                  expand: ["payment_intent"],
-                }),
+                stripe.checkout.sessions.retrieve(id),
               ]);
               return { accountId: account.id, session };
             },
@@ -131,7 +100,6 @@ export const makeStripeClient = (
                 mode: "payment",
                 managed_payments: { enabled: true },
                 customer_creation: "always",
-                payment_intent_data: { capture_method: "manual" },
                 client_reference_id: input.requestId,
                 metadata: {
                   request_id: input.requestId,
@@ -169,24 +137,6 @@ export const makeStripeClient = (
           catch: providerError,
         });
       }).pipe(Effect.flatMap(checkEnvironment)),
-    capturePayment: (intentId: string, requestId: string) =>
-      payment((stripe) =>
-        stripe.paymentIntents.capture(
-          intentId,
-          {},
-          { idempotencyKey: `ringback-capture-${requestId}` },
-        ),
-      ),
-    releasePayment: (intentId: string, requestId: string) =>
-      payment((stripe) =>
-        stripe.paymentIntents.cancel(
-          intentId,
-          { cancellation_reason: "abandoned" },
-          { idempotencyKey: `ringback-release-${requestId}` },
-        ),
-      ),
-    retrievePayment: (intentId: string) =>
-      payment((stripe) => stripe.paymentIntents.retrieve(intentId)),
     verifyEvent: (payload: Buffer, signature: string | undefined) =>
       verifyStripeEvent(payload, signature, webhookSecret).pipe(
         Effect.filterOrFail(
@@ -233,7 +183,7 @@ export const stripeConfig = Effect.gen(function* () {
   });
 });
 
-// StripeClient is the api's client for Stripe Checkout and the payments it holds.
+// StripeClient is the api's client for Stripe Checkout.
 export class StripeClient extends Effect.Service<StripeClient>()(
   "api/StripeClient",
   {

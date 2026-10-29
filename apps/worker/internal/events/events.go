@@ -29,12 +29,6 @@ type Start struct {
 	At             time.Time
 }
 
-// Unanswered describes a call that ended before anyone answered: busy, declined, failed, or never picked up.
-type Unanswered struct {
-	Room string
-	At   time.Time
-}
-
 // End describes how one call finished.
 type End struct {
 	Room           string
@@ -112,18 +106,6 @@ func (p *Publisher) CallStarted(s Start) {
 		"direction":       s.Direction,
 		"prompt":          s.Prompt,
 		"started_at":      strconv.FormatInt(s.At.UnixMilli(), 10),
-	})
-}
-
-// CallUnanswered announces a call that will never start, so its payment hold can be released.
-func (p *Publisher) CallUnanswered(u Unanswered) {
-	if p == nil {
-		return
-	}
-	p.publish(map[string]any{
-		"event":    "call.unanswered",
-		"room":     u.Room,
-		"ended_at": strconv.FormatInt(u.At.UnixMilli(), 10),
 	})
 }
 

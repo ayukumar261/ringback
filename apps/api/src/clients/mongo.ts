@@ -18,7 +18,7 @@ export interface PrivacyEdition {
   url: string;
 }
 
-// PurchaseDoc is one completed Checkout session with the customer's details at payment time.
+// PurchaseDoc is one paid Checkout session with the customer's details at payment time.
 export interface PurchaseDoc {
   _id: string;
   requestId: string;
@@ -57,9 +57,6 @@ export const createPurchaseIndexes = (purchases: Collection<PurchaseDoc>) =>
     }),
   ]);
 
-// PaymentStatus is a purchase's payment: held at checkout, then charged or released.
-export type PaymentStatus = "held" | "charged" | "released";
-
 // RequestDoc is one call an agent asked for, from checkout through dispatch.
 export interface RequestDoc {
   _id: string;
@@ -91,18 +88,14 @@ export interface RequestDoc {
   room: string;
   checkout?: { id: string; url: string; accountId: string; livemode: boolean };
   purchaseId?: string;
-  payment?: {
-    status: PaymentStatus;
-    heldAt: Date;
-    settledAt?: Date;
-  };
+  paidAt?: Date;
   claimedAt?: Date;
   dialedAt?: Date;
   // error says why dialing failed, which can happen after the call already went through.
   error?: string;
 }
 
-// createRequestIndexes binds each Checkout session to one request and orders the dispatch and settlement queues.
+// createRequestIndexes binds each Checkout session to one request and orders the dispatch queue.
 export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
   Promise.all([
     requests.createIndex(
@@ -121,7 +114,6 @@ export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
     ),
     requests.createIndex({ status: 1, createdAt: 1 }),
     requests.createIndex({ room: 1 }),
-    requests.createIndex({ "payment.status": 1, claimedAt: 1 }),
   ]);
 
 // CallDoc is one call, active until its call.ended lands.

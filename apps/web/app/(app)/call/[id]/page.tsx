@@ -141,14 +141,7 @@ function CallDashboard({ id }: { id: string }) {
 }
 
 type CallState =
-  | "unpaid"
-  | "preparing"
-  | "dialing"
-  | "active"
-  | "ended"
-  | "unanswered"
-  | "expired"
-  | "failed"
+  "unpaid" | "preparing" | "dialing" | "active" | "ended" | "expired" | "failed"
 
 const emptyStates = {
   unpaid: {
@@ -180,12 +173,6 @@ const emptyStates = {
     description: "This call has ended, but there is no transcript available.",
     icon: MessageSquare,
   },
-  unanswered: {
-    title: "No one answered",
-    description:
-      "The call didn’t connect, so the hold on your payment was released. You weren’t charged.",
-    icon: PhoneOff,
-  },
   expired: {
     title: "This call wasn’t started",
     description: "The payment window has closed. No call was placed.",
@@ -200,12 +187,6 @@ const emptyStates = {
 }
 
 function callState(data: Call, expired: boolean): CallState {
-  if (
-    data.status === "dialed" &&
-    data.payment_status === "released" &&
-    data.call?.started_at === undefined
-  )
-    return "unanswered"
   if (data.call?.status === "ended") return "ended"
   if (data.call?.status === "active") return "active"
   if (expired || data.status === "expired") return "expired"
@@ -293,7 +274,7 @@ function CallContent({
   const waiting = emptyStates[state]
   const EmptyIcon = waiting.icon
   const live = state === "active"
-  const finished = ["ended", "unanswered", "expired", "failed"].includes(state)
+  const finished = ["ended", "expired", "failed"].includes(state)
   const audioStartedAt =
     data.call?.audio_started_at ??
     (data.call?.ended_at !== undefined && duration !== undefined
@@ -448,10 +429,6 @@ function CallContent({
                             </span>
                             Up to {formatLimit(data.max_duration_seconds)}
                           </p>
-                          <p className="mt-1 max-w-[285px] text-[11px] text-muted-foreground">
-                            Your payment is held and charged only if the call
-                            connects.
-                          </p>
                         </>
                       )}
                     </div>
@@ -495,20 +472,6 @@ function CallContent({
                   </dd>
                 </>
               )}
-              {data.payment_status !== "unpaid" && (
-                <>
-                  <dt className="text-muted-foreground">Payment</dt>
-                  <dd className="text-right">
-                    {
-                      {
-                        held: `${price} on hold`,
-                        charged: `${price} charged`,
-                        released: "Hold released",
-                      }[data.payment_status]
-                    }
-                  </dd>
-                </>
-              )}
               <dt className="text-muted-foreground">Created</dt>
               <dd className="text-right">{formatClock(data.created_at)}</dd>
               {data.call?.ended_at !== undefined && (
@@ -520,12 +483,6 @@ function CallContent({
                 </>
               )}
             </dl>
-            {data.payment_status === "held" && (
-              <p className="mt-3 text-[12px] leading-5 text-muted-foreground">
-                You’re charged only if the call connects. Otherwise the hold is
-                released.
-              </p>
-            )}
           </section>
         </aside>
       </div>

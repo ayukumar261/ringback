@@ -1,23 +1,17 @@
-import { Effect, Schema } from "effect";
+import { Schema } from "effect";
 import type { MongoClient } from "../clients/mongo.js";
 import { applyCallEnded, CallEnded } from "./call-ended.js";
 import { CallSip } from "./call-sip.js";
 import { applyCallStarted, CallStarted } from "./call-started.js";
 import { applyCallTurn, CallTurn } from "./call-turn.js";
-import { CallUnanswered } from "./call-unanswered.js";
 
-export { CallEnded, CallSip, CallStarted, CallTurn, CallUnanswered };
+export { CallEnded, CallSip, CallStarted, CallTurn };
 
 // CallStream is the Redis stream key the worker publishes call events to.
 export const CallStream = "ringback:calls";
 
 // CallEvent is every event the customer's feed carries.
-export const CallEvent = Schema.Union(
-  CallStarted,
-  CallTurn,
-  CallEnded,
-  CallUnanswered,
-);
+export const CallEvent = Schema.Union(CallStarted, CallTurn, CallEnded);
 export type CallEvent = typeof CallEvent.Type;
 
 // WorkerEvent is every event the worker publishes, including internal ones.
@@ -36,8 +30,6 @@ export const applyCallEvent = (mongo: MongoClient, ev: CallEvent) => {
       return applyCallTurn(mongo, ev);
     case "call.ended":
       return applyCallEnded(mongo, ev);
-    case "call.unanswered":
-      return Effect.void;
   }
 };
 

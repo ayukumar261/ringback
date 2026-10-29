@@ -13,7 +13,6 @@ import { PaymentConfig } from "./handlers/payments/config.js";
 import { AudioConfig } from "./handlers/audio/config.js";
 import { CallsConfig } from "./handlers/calls/config.js";
 import { DispatchLive } from "./pipeline/dispatch.js";
-import { SettleLive } from "./pipeline/settle.js";
 import { TwilioClient } from "./clients/twilio.js";
 import { PreflightConfig } from "./preflight/config.js";
 import { Preflight } from "./preflight/preflight.js";
@@ -57,7 +56,6 @@ const AppLive = Layer.mergeAll(
   MaterializerLive,
   DispatchLive,
   ExpenseCollectorLive,
-  SettleLive,
 ).pipe(
   Layer.provide(Preflight.Default),
   Layer.provide(

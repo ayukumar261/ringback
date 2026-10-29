@@ -4,10 +4,8 @@ import { LiveKitClient, LiveKitError } from "../clients/livekit.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   PaymentError,
-  logPaymentError,
   logPaymentFailure,
 } from "../handlers/payments/errors.js";
-import { settlePayment } from "./settle.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
 import { Preflight } from "../preflight/preflight.js";
 import { PreflightError } from "../preflight/errors.js";
@@ -95,14 +93,6 @@ export const dispatchCall = Effect.gen(function* () {
           e instanceof PreflightError
           ? e.code
           : "internal",
-      ).pipe(
-        Effect.zipRight(
-          e instanceof PaymentError || e instanceof PreflightError
-            ? settlePayment(record, "release").pipe(
-                Effect.catchAll((error) => logPaymentError("settle", error)),
-              )
-            : Effect.void,
-        ),
       ),
     ),
     Effect.onInterrupt(() => recordError("interrupted").pipe(Effect.ignore)),

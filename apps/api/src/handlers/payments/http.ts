@@ -13,8 +13,6 @@ import {
   type RequestDoc,
 } from "../../clients/mongo.js";
 import {
-  paymentIntentId,
-  sessionPayment,
   StripeClient,
   StripeError,
   type CheckoutSession,
@@ -25,7 +23,6 @@ import { Preflight } from "../../preflight/preflight.js";
 import { PreflightError, preflightStatus } from "../../preflight/errors.js";
 import {
   checkCallInput,
-  callPaymentStatus,
   callRequestStatus,
   hash,
   MAX_DURATION,
@@ -123,7 +120,6 @@ const callResponse = (
   return Effect.succeed({
     call_id: request._id,
     status,
-    payment_status: callPaymentStatus(request),
     checkout_url: status === "unpaid" ? request.checkout.url : null,
     checkout_expires_at: request.expiresAt.toISOString(),
     status_url: `${settings.publicApiUrl}/call/${request._id}`,
@@ -350,8 +346,8 @@ export const createCall = paymentResponse(
   }),
 );
 
-// recordPurchase stores the purchase for a held or charged session the webhook already matched to its request.
-export const recordPurchase = (
+// recordPaidCheckout stores the purchase for a paid session the webhook already matched to its request.
+export const recordPaidCheckout = (
   purchases: Collection<PurchaseDoc>,
   { accountId, session }: CheckoutSession,
   { terms, privacy }: Pick<RequestDoc, "terms" | "privacy">,
@@ -359,7 +355,8 @@ export const recordPurchase = (
   Effect.gen(function* () {
     if (
       session.mode !== "payment" ||
-      !sessionPayment(session) ||
+      session.status !== "complete" ||
+      session.payment_status !== "paid" ||
       session.consent?.terms_of_service !== "accepted"
     )
       return yield* new PaymentError({ code: "invalid_request" });
@@ -367,7 +364,10 @@ export const recordPurchase = (
       typeof session.customer === "string"
         ? session.customer
         : session.customer?.id;
-    const intentId = paymentIntentId(session);
+    const intentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id;
     if (
       !accountId ||
       !session.id ||
@@ -432,7 +432,6 @@ export const readCallRequest = (id: string, token: string | undefined) =>
     return {
       call_id: id,
       status: callRequestStatus(request),
-      payment_status: callPaymentStatus(request),
       room: request.dialedAt ? request.room : null,
       error: request.error ?? null,
     };

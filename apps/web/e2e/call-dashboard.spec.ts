@@ -405,7 +405,6 @@ test("the theme menu persists preferences and follows the system and shortcut", 
 
 for (const [stage, heading] of [
   ["dialing", "Waiting for an answer"],
-  ["unanswered", "No one answered"],
   ["failed", "The call couldn’t be placed"],
 ] as const) {
   test(`${stage} calls show a clear status without offering payment`, async ({
@@ -421,37 +420,3 @@ for (const [stage, heading] of [
     await expect(page.getByText("Private task for a")).toBeVisible()
   })
 }
-
-for (const [stage, payment, explained] of [
-  ["dialing", "$0.50 on hold", true],
-  ["ended", "$0.50 charged", false],
-  ["unanswered", "Hold released", false],
-] as const) {
-  test(`${stage} calls show the payment as ${payment}`, async ({
-    page,
-    api,
-  }) => {
-    api.stage = stage
-    await page.goto(`/call/a#token=${tokens.a}`)
-    const details = page.getByRole("region", { name: "Call details" })
-    await expect(details.getByText(payment, { exact: true })).toBeVisible()
-    await expect(
-      details.getByText("You’re charged only if the call connects.", {
-        exact: false,
-      })
-    ).toHaveCount(explained ? 1 : 0)
-  })
-}
-
-test("unpaid calls explain the hold before payment", async ({ page, api }) => {
-  api.stage = "unpaid"
-  await page.goto(`/call/a#token=${tokens.a}`)
-  await expect(
-    page.getByText(
-      "Your payment is held and charged only if the call connects."
-    )
-  ).toBeVisible()
-  await expect(
-    page.getByRole("region", { name: "Call details" }).getByText("Payment")
-  ).toHaveCount(0)
-})
