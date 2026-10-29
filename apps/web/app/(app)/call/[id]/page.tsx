@@ -473,15 +473,19 @@ function CallContent({
                 </>
               )}
               <dt className="text-muted-foreground">Created</dt>
-              <dd className="text-right">{formatClock(data.created_at)}</dd>
+              <dd className="text-right">{formatDate(data.created_at)}</dd>
               {data.call?.ended_at !== undefined && (
                 <>
                   <dt className="text-muted-foreground">Ended</dt>
                   <dd className="text-right">
-                    {formatClock(data.call.ended_at)}
+                    {formatDate(data.call.ended_at)}
                   </dd>
                 </>
               )}
+              <dt className="text-muted-foreground">Expires</dt>
+              <dd className="text-right">
+                {formatDate(data.access_expires_at)}
+              </dd>
             </dl>
           </section>
         </aside>
@@ -1103,10 +1107,10 @@ function formatTime(seconds: number) {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`
 }
 
-function formatClock(value: string | number) {
-  return new Date(value).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
+function formatDate(value: string | number) {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
   })
 }
 
