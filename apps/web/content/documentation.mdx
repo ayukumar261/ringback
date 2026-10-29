@@ -57,6 +57,7 @@ curl -X POST https://corbyn.ai/api/call \
 {
   "call_id": "3f9c…",
   "status": "unpaid",
+  "payment_status": "unpaid",
   "checkout_url": "https://checkout.stripe.com/…",
   "checkout_expires_at": "2026-10-15T18:00:00.000Z",
   "status_url": "https://corbyn.ai/api/call/3f9c…",
@@ -71,6 +72,7 @@ curl -X POST https://corbyn.ai/api/call \
 
 - `call_id`: the call’s ID, used by every other endpoint.
 - `status`: `unpaid` for a new call. See [Call status](#call-status).
+- `payment_status`: `unpaid` for a new call. See [Payment status](#payment-status).
 - `checkout_url`: the Stripe Checkout page while payment is still available; `null` on retries after payment or expiry.
 - `checkout_expires_at`: the payment deadline, as an ISO 8601 timestamp. Retries preserve the original Checkout and deadline.
 - `status_url`: the [Get a call](#get-a-call) address for this call.
@@ -102,6 +104,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 {
   "call_id": "3f9c…",
   "status": "dialed",
+  "payment_status": "charged",
   "dashboard_url": "https://corbyn.ai/call/3f9c…#token=<token>",
   "room": "call_3f9c…",
   "error": null,
@@ -126,6 +129,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 ```
 
 - `status`: payment and dialing status. See [Call status](#call-status).
+- `payment_status`: whether the payment is held, charged, or released. See [Payment status](#payment-status).
 - `dashboard_url`: the private link to send to the user immediately after payment. It includes `#token=…` so they can open the dashboard in their own browser. Keep it out of public messages and logs.
 - `room`: the call’s room name, which also appears in transcript turns and live events. `null` until the call is dialed.
 - `error`: a short reason code when `status` is `failed`; otherwise `null`.
@@ -145,7 +149,7 @@ curl https://corbyn.ai/api/call/<call_id> \
 `status` moves forward through these values:
 
 1. `unpaid`: waiting for payment.
-2. `paid`: Stripe confirmed the payment.
+2. `paid`: Stripe placed a hold for the call’s price. See [Payment status](#payment-status).
 3. `dialing`: the call is being placed.
 4. `dialed`: the call was placed. This doesn’t mean anyone answered; check `call`.
 
@@ -154,7 +158,18 @@ A call can also end early:
 - `expired`: the checkout wasn’t paid within 60 minutes. Nothing was charged.
 - `failed`: payment failed (`error` is `payment_failed`) or the call couldn’t be placed. Nothing is dialed after a failed payment. A failed dial isn’t retried, because it may have gone through.
 
-After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
+After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If nobody answers, `call` appears already `ended`, with no `started_at`, and `payment_status` changes to `released`.
+
+## Payment status
+
+Checkout holds the call’s price on the card and charges it only if the call connects. `payment_status` is one of:
+
+- `unpaid`: checkout isn’t complete.
+- `held`: the price is on hold. The call is about to be placed, or is ringing.
+- `charged`: the call connected, so the hold was charged. A call answered by voicemail counts as connected.
+- `released`: the call didn’t connect, so the hold was released and nothing was charged. This happens right after the call ends when nobody answers or the line is busy, and right away when the call can’t be placed. If the dial fails partway, the release can take up to about six minutes, in case the call went through.
+
+A released hold can stay on the card statement as pending for a few days, depending on the bank, but it’s never collected.
 
 ## Get the transcript
 
@@ -228,6 +243,7 @@ data: {"event":"call.turn","room":"call_3f9c…","seq":1,"role":"agent","text":"
 - `call.started`: someone answered. Includes `started_at`.
 - `call.turn`: a transcript turn, with the same fields as [Get the transcript](#get-the-transcript). A turn whose `seq` you’ve already seen is a correction; replace the earlier one.
 - `call.ended`: the conversation is over. Includes `ended_at`, `duration_ms`, `audio_available`, and `audio_started_at`.
+- `call.unanswered`: the call ended before anyone answered, for example because the line was busy. Includes `ended_at`. The hold on the payment is released, and `call.ended` follows with no `call.started` before it.
 - `access.unavailable`: the stream can no longer confirm access, for example because the token expired. The stream ends after this event.
 
 Each event has an `id`. When you reconnect, send the last one you received as `Last-Event-ID` to replay recent events you missed. The server sends a comment line at least every 15 seconds to keep the connection open. The stream stays open after the call ends, so close it once you receive `call.ended`.

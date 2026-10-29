@@ -89,13 +89,23 @@ const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
       changes.requestSnapshotHash ?? requestSnapshotHash(record),
   };
 };
+const intent = (status: Stripe.PaymentIntent.Status) =>
+  ({ id: "pi_test", object: "payment_intent", status }) as Stripe.PaymentIntent;
+const held = {
+  payment_status: "unpaid",
+  payment_intent: intent("requires_capture"),
+} as const;
+const pending = {
+  payment_status: "unpaid",
+  payment_intent: intent("processing"),
+} as const;
 const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
   ({
     id: "cs_test",
     object: "checkout.session",
     mode: "payment",
     status: "complete",
-    payment_status: "paid",
+    ...held,
     consent: { terms_of_service: "accepted", promotions: null },
     livemode: true,
     client_reference_id: "request-test",
@@ -110,7 +120,6 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     },
     url: "https://checkout.stripe.com/test",
     customer: "cus_test",
-    payment_intent: "pi_test",
     customer_details: {
       name: "Test payer",
       email: "payer@example.com",
@@ -192,6 +201,22 @@ const harness = (
       expiresAt: Date.now() + 3_600_000,
     }),
   );
+  const release = vi.fn(
+    async (intentId: string) =>
+      ({
+        id: intentId,
+        object: "payment_intent",
+        status: "canceled",
+      }) as Stripe.PaymentIntent,
+  );
+  const stripe = StripeClient.make({
+    releasePayment: (intentId) => Effect.promise(() => release(intentId)),
+    capturePayment: () => Effect.dieMessage("Dispatch must not capture"),
+    retrievePayment: () => Effect.dieMessage("Unexpected payment lookup"),
+    retrieveSession: () => Effect.dieMessage("Unexpected session lookup"),
+    createSession: () => Effect.dieMessage("Unexpected Checkout creation"),
+    verifyEvent: () => Effect.dieMessage("Unexpected verification"),
+  });
   const provide = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
     overrides: Partial<Settings> = {},
@@ -200,6 +225,7 @@ const harness = (
       Effect.provideService(MongoClient, mongo as MongoClient),
       Effect.provideService(LiveKitClient, dialer),
       Effect.provideService(Preflight, Preflight.make({ check })),
+      Effect.provideService(StripeClient, stripe),
       Effect.provideService(
         PaymentConfig,
         PaymentConfig.make({ ...settings, ...overrides }),
@@ -209,12 +235,13 @@ const harness = (
     check,
     ready,
     dial,
+    release,
     provide,
     run: <A, E>(
       effect: Effect.Effect<
         A,
         E,
-        MongoClient | LiveKitClient | PaymentConfig | Preflight
+        MongoClient | LiveKitClient | PaymentConfig | Preflight | StripeClient
       >,
       overrides: Partial<Settings> = {},
     ) => Effect.runPromise(provide(effect, overrides)),
@@ -226,27 +253,60 @@ describe("paid dispatch", () => {
     "unsupported_country",
     "unsupported_line_type",
     "lookup_unavailable",
-  ] as const)("does not dial when preflight returns %s", async (code) => {
+  ] as const)(
+    "does not dial and releases the hold when preflight returns %s",
+    async (code) => {
+      const mongo = fakeMongo();
+      mongo.requests.findOneAndUpdate.mockResolvedValue(
+        requestFixture({
+          status: "dialing",
+          purchaseId: "acct_test:live:cs_test",
+          payment: { status: "held", heldAt: new Date() },
+        }),
+      );
+      mongo.purchases.findOne.mockResolvedValue(purchaseFixture());
+      const h = harness(mongo);
+      h.check.mockReturnValueOnce(Effect.fail(new PreflightError({ code })));
+      await h.run(dispatchCall);
+      expect(h.check).toHaveBeenCalledWith(input.to, {
+        requestId: "request-test",
+        room: "call_request-test",
+      });
+      expect(h.dial).not.toHaveBeenCalled();
+      expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+        { _id: "request-test", status: "dialing" },
+        { $set: { status: "failed", error: code } },
+      );
+      expect(h.release).toHaveBeenCalledWith("pi_test");
+      expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+        { _id: "request-test", "payment.status": "held" },
+        {
+          $set: {
+            "payment.status": "released",
+            "payment.settledAt": expect.any(Date),
+          },
+        },
+      );
+    },
+  );
+  it("keeps the hold when dialing fails, since the call may have gone through", async () => {
     const mongo = fakeMongo();
     mongo.requests.findOneAndUpdate.mockResolvedValue(
       requestFixture({
         status: "dialing",
         purchaseId: "acct_test:live:cs_test",
+        payment: { status: "held", heldAt: new Date() },
       }),
     );
     mongo.purchases.findOne.mockResolvedValue(purchaseFixture());
     const h = harness(mongo);
-    h.check.mockReturnValueOnce(Effect.fail(new PreflightError({ code })));
+    h.dial.mockRejectedValueOnce(new Error("SIP timeout"));
     await h.run(dispatchCall);
-    expect(h.check).toHaveBeenCalledWith(input.to, {
-      requestId: "request-test",
-      room: "call_request-test",
-    });
-    expect(h.dial).not.toHaveBeenCalled();
     expect(mongo.requests.updateOne).toHaveBeenCalledWith(
       { _id: "request-test", status: "dialing" },
-      { $set: { status: "failed", error: code } },
+      { $set: { status: "failed", error: "unavailable" } },
     );
+    expect(h.release).not.toHaveBeenCalled();
   });
 
   it.each(["development", "production"] as const)(
@@ -388,7 +448,7 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
         checkout: { ...requestFixture().checkout!, livemode },
         status: "paid",
         purchaseId: purchase._id,
-        paidAt: purchase.recordedAt,
+        payment: { status: "held", heldAt: purchase.recordedAt },
       });
       await mongo.requests.insertOne(record);
       await mongo.purchases.insertOne(purchase);
@@ -433,6 +493,10 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
               Effect.succeed({ accountId: "acct_test", session }),
             createSession: () =>
               Effect.dieMessage("Unexpected Checkout creation"),
+            capturePayment: () => Effect.dieMessage("Unexpected capture"),
+            releasePayment: () => Effect.dieMessage("Unexpected release"),
+            retrievePayment: () =>
+              Effect.dieMessage("Unexpected payment lookup"),
             verifyEvent: () =>
               Effect.dieMessage("Unexpected signature verification"),
           }),
@@ -459,7 +523,7 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     await h.mongo.requests.insertOne(record);
     const session = sessionFixture({
       status: "complete",
-      payment_status: "unpaid",
+      ...pending,
       managed_payments: { enabled: true },
       amount_subtotal: 47,
       amount_total: 50,
@@ -475,6 +539,10 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
                 Effect.succeed({ accountId: "acct_test", session }),
               createSession: () =>
                 Effect.dieMessage("Unexpected Checkout creation"),
+              capturePayment: () => Effect.dieMessage("Unexpected capture"),
+              releasePayment: () => Effect.dieMessage("Unexpected release"),
+              retrievePayment: () =>
+                Effect.dieMessage("Unexpected payment lookup"),
               verifyEvent: () =>
                 Effect.dieMessage("Unexpected signature verification"),
             }),
@@ -485,7 +553,7 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     expect(await h.run(dispatchCall)).toBe(false);
     expect(h.dial).not.toHaveBeenCalled();
 
-    session.payment_status = "paid";
+    Object.assign(session, held);
     await receive("checkout.session.async_payment_succeeded");
     await h.run(dispatchCall);
     await receive("checkout.session.async_payment_succeeded");

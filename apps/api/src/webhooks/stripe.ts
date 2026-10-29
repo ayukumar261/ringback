@@ -2,13 +2,13 @@ import { HttpServerRequest } from "@effect/platform";
 import { Effect } from "effect";
 import type Stripe from "stripe";
 import { MongoClient } from "../clients/mongo.js";
-import { StripeClient } from "../clients/stripe.js";
+import { sessionPayment, StripeClient } from "../clients/stripe.js";
 import { PaymentError, logPaymentError } from "../handlers/payments/errors.js";
 import {
   json,
   paymentResponse,
   readBody,
-  recordPaidCheckout,
+  recordPurchase,
 } from "../handlers/payments/http.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
 
@@ -20,7 +20,7 @@ const events = new Set([
   "checkout.session.async_payment_failed",
 ]);
 
-// handleStripeEvent queues the call for a paid Checkout session and marks failed or expired ones.
+// handleStripeEvent queues the call once its payment is held and marks failed or expired sessions.
 export const handleStripeEvent = (event: Stripe.Event) =>
   Effect.gen(function* () {
     if (!events.has(event.type)) return { received: true };
@@ -57,7 +57,8 @@ export const handleStripeEvent = (event: Stripe.Event) =>
       )
         return yield* new PaymentError({ code: "conflict" });
       // current Stripe state wins over duplicate or out-of-order events
-      if (session.status !== "complete" || session.payment_status !== "paid") {
+      const payment = sessionPayment(session);
+      if (!payment) {
         if (session.status === "expired")
           yield* Effect.tryPromise(() =>
             mongo.requests.updateOne(
@@ -78,11 +79,7 @@ export const handleStripeEvent = (event: Stripe.Event) =>
           );
         return { received: true };
       }
-      const purchase = yield* recordPaidCheckout(
-        mongo.purchases,
-        verified,
-        record,
-      );
+      const purchase = yield* recordPurchase(mongo.purchases, verified, record);
       // the purchase and the queue are separate writes, so retrying after either one is safe
       yield* Effect.tryPromise(() =>
         mongo.requests.updateOne(
@@ -97,7 +94,13 @@ export const handleStripeEvent = (event: Stripe.Event) =>
             $set: {
               status: "paid",
               purchaseId: purchase._id,
-              paidAt: purchase.recordedAt,
+              payment: {
+                status: payment,
+                heldAt: purchase.recordedAt,
+                ...(payment === "charged" && {
+                  settledAt: purchase.recordedAt,
+                }),
+              },
             },
             $unset: { error: "" },
           },

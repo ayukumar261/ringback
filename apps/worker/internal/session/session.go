@@ -63,6 +63,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 		rm.Close()
 		if errors.Is(err, room.ErrNotAnswered) {
 			log.Info("call ended before answer", "reason", err)
+			opts.Events.CallUnanswered(events.Unanswered{Room: roomName, At: time.Now()})
 			return nil
 		}
 		return setupErr(ctx, err)

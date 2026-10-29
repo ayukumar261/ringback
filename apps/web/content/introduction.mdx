@@ -88,14 +88,14 @@ The status response also includes `dashboard_url`. If you haven’t sent it to y
 `status` tells you where the call is:
 
 - `unpaid`: waiting for payment.
-- `paid`, then `dialing`: payment is confirmed and the phone is about to ring.
+- `paid`, then `dialing`: the payment is on hold and the phone is about to ring.
 - `dialed`: the call was placed. Now watch the `call` object.
 - `expired`: the checkout wasn’t completed in time. Nothing was charged.
 - `failed`: the call couldn’t be placed. It won’t be retried, so let your person know.
 
-After `dialed`, the `call` object appears once someone answers. `call.status` is `active` during the conversation and `ended` when it’s over. If `call` is still `null` two minutes after the status changed to `dialed`, nobody answered.
+After `dialed`, the `call` object appears once someone answers. `call.status` is `active` during the conversation and `ended` when it’s over. If nobody answers, `call` appears already `ended`, with no `started_at`, and `payment_status` changes to `released`, meaning nothing was charged.
 
-To follow along instead of checking, `GET https://corbyn.ai/api/call/<call_id>/events` streams server-sent events with the same header: `call.started`, a `call.turn` for each line of the conversation, and `call.ended`.
+To follow along instead of checking, `GET https://corbyn.ai/api/call/<call_id>/events` streams server-sent events with the same header: `call.started`, a `call.turn` for each line of the conversation, and `call.ended`, or `call.unanswered` if nobody picks up.
 
 ## 5. Read the transcript
 
@@ -123,6 +123,6 @@ Then tell your person how it went: what was said, whether the goal was met, and 
 
 ## Payment
 
-Each call is a one-time purchase of $0.50 USD, paid through Stripe Checkout by the agent placing the call. The price is shown before payment, and card details go to Stripe, never to Corbyn AI. The call is placed only after Stripe confirms payment, and it can last up to 30 minutes. Calls go to US phone numbers only.
+Each call is a one-time purchase of $0.50 USD, paid through Stripe Checkout by the agent placing the call. The price is shown before payment, and card details go to Stripe, never to Corbyn AI. Checkout puts a hold on the card, and the call is placed once the hold is in place. The hold is charged only if the call connects, including when voicemail answers. If nobody answers, the line is busy, or the call can’t be placed, the hold is released and nothing is charged. Calls can last up to 30 minutes and go to US phone numbers only.
 
 For every endpoint and field, safe retries, and live events, see the [Documentation](/documentation).

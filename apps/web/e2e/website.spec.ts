@@ -19,7 +19,7 @@ test("Checkout's dated Terms URL preserves the published edition", async ({
 }) => {
   await page.goto("/terms-and-conditions")
   const current = await page.locator("article").innerText()
-  await page.goto("/terms-and-conditions/2026-10-30")
+  await page.goto("/terms-and-conditions/2026-11-01")
   await expect(
     page.getByRole("heading", {
       name: "Corbyn AI Terms and Conditions",
@@ -28,8 +28,18 @@ test("Checkout's dated Terms URL preserves the published edition", async ({
   ).toBeVisible()
   expect(await page.locator("article").innerText()).toBe(current)
   await expect(page.locator("article")).toContainText(
-    "Effective date: October 30, 2026"
+    "Effective date: November 1, 2026"
   )
+})
+
+test("Earlier Terms editions stay published unchanged", async ({ page }) => {
+  await page.goto("/terms-and-conditions/2026-10-30")
+  const article = page.locator("article")
+  await expect(article).toContainText("Effective date: October 30, 2026")
+  await expect(article).toContainText(
+    "You authorize that charge when you complete payment."
+  )
+  await expect(article).not.toContainText("you authorize a hold")
 })
 
 test("Checkout's dated Privacy Policy URL preserves the published edition", async ({

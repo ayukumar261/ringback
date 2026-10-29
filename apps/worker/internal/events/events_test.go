@@ -65,6 +65,25 @@ func TestCallStartedValues(t *testing.T) {
 	}
 }
 
+func TestCallUnansweredValues(t *testing.T) {
+	fake := &fakeXAdder{}
+	p := New(fake, nil)
+
+	p.CallUnanswered(Unanswered{Room: "call-a", At: time.UnixMilli(1753795230789)})
+
+	if len(fake.args) != 1 {
+		t.Fatalf("XAdd calls = %d, want 1", len(fake.args))
+	}
+	want := map[string]any{
+		"event":    "call.unanswered",
+		"room":     "call-a",
+		"ended_at": "1753795230789",
+	}
+	if values := fake.args[0].Values.(map[string]any); !maps.Equal(values, want) {
+		t.Errorf("values = %v, want %v", values, want)
+	}
+}
+
 func TestCallEndedValues(t *testing.T) {
 	fake := &fakeXAdder{}
 	p := New(fake, nil)
@@ -163,6 +182,7 @@ func TestNilPublisherPublishesNothing(t *testing.T) {
 	p.CallTurn(Turn{Room: "call-a", Seq: 1})
 	p.CallEnded(End{Room: "call-a"})
 	p.CallSIP(SIP{Room: "call-a"})
+	p.CallUnanswered(Unanswered{Room: "call-a"})
 }
 
 func TestCallSIPBeforeAgentStartup(t *testing.T) {

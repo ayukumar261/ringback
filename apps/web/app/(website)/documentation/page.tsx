@@ -15,6 +15,7 @@ const sections: readonly Section[] = [
   { id: "create-a-call", title: "Create a call" },
   { id: "get-a-call", title: "Get a call" },
   { id: "call-status", title: "Call status" },
+  { id: "payment-status", title: "Payment status" },
   { id: "get-the-transcript", title: "Get the transcript" },
   { id: "stream-live-events", title: "Stream live events" },
   { id: "get-the-recording", title: "Get the recording" },

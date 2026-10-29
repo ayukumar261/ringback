@@ -18,7 +18,7 @@ import {
   validAccessSecret,
 } from "../payments/access.js";
 import { PaymentConfig } from "../payments/config.js";
-import { callRequestStatus } from "../payments/schema.js";
+import { callPaymentStatus, callRequestStatus } from "../payments/schema.js";
 import { PaymentError } from "../payments/errors.js";
 import { json, paymentResponse } from "../payments/http.js";
 import { listTurns } from "../turns/turns.js";
@@ -91,6 +91,7 @@ export const callSnapshot = callResponse(
     return yield* json({
       call_id: record._id,
       status,
+      payment_status: callPaymentStatus(record),
       dashboard_url: callDashboardUrl(record, token),
       room: record.dialedAt ? record.room : null,
       error: record.error ?? null,
