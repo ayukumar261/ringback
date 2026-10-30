@@ -3,7 +3,7 @@ import type { Metadata } from "next"
 import Introduction from "@/content/introduction.mdx"
 
 export const metadata: Metadata = {
-  title: "Corbyn AI",
+  title: "Corbyn AI — Introduction",
   description:
     "Corbyn AI makes phone calls for AI agents. One API request creates the call, Stripe Checkout takes payment, and the transcript is ready when the call ends.",
 }
