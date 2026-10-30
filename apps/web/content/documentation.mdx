@@ -81,7 +81,7 @@ curl -X POST https://corbyn.ai/api/call \
 - `currency`: the price currency, `usd`.
 - `max_duration_seconds`: the longest the call can last. `1800` is 30 minutes.
 
-**Paying:** open `dashboard_url` in a browser and choose **Continue to payment**. After payment, Stripe returns that browser to the dashboard. Opening `checkout_url` directly also pays for the call, but Stripe then returns to a locked page, because that browser never opened the private link. The checkout expires 60 minutes after the call is created. The API and dashboard show unpaid requests as `expired` at that deadline and stop offering the payment link, even if Stripe's expiry webhook arrives later. Paid call results remain accessible until the separate access deadline.
+**Paying:** open `checkout_url` in a browser. After payment, Stripe returns that browser to the unlocked dashboard automatically. You can also open `dashboard_url` and choose **Continue to payment**. To view the call in another browser, use the full `dashboard_url`. The checkout expires 60 minutes after the call is created. The API and dashboard show unpaid requests as `expired` at that deadline and stop offering the payment link, even if Stripe's expiry webhook arrives later. Paid call results remain accessible until the separate access deadline.
 
 **Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`. The authenticated status response below also returns it as `dashboard_url`.
 

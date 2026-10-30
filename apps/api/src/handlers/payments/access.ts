@@ -10,6 +10,7 @@ import { PaymentError } from "./errors.js";
 
 // Access outlives the 60-minute checkout window so completed results remain readable.
 export const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
+export const HANDOFF_GRACE_MS = 5 * 60_000;
 
 export const newAccessToken = () => randomBytes(32).toString("base64url");
 
@@ -25,14 +26,14 @@ export const validAccessSecret = (secret: string) =>
 
 export const secretHash = (
   secret: string,
-  kind: "access" | "recovery" = "access",
+  kind: "access" | "recovery" | "handoff" = "access",
 ) =>
   createHash("sha256").update(`ringback:${kind}:`).update(secret).digest("hex");
 
 const matchesSecret = (
   secret: string,
   digest: string,
-  kind: "access" | "recovery",
+  kind: "access" | "recovery" | "handoff",
 ) =>
   validAccessSecret(secret) &&
   /^[a-f0-9]{64}$/.test(digest) &&
@@ -62,7 +63,9 @@ export const hasCallAccess = (request: RequestDoc, token: string | undefined) =>
     token &&
     !request.access.revokedAt &&
     request.access.expiresAt.getTime() > Date.now() &&
-    matchesSecret(token, request.access.tokenHash, "access")
+    (matchesSecret(token, request.access.tokenHash, "access") ||
+      (request.access.browserTokenHash &&
+        matchesSecret(token, request.access.browserTokenHash, "access")))
   );
 
 export interface CreationCredentials {
@@ -95,8 +98,65 @@ export const retryAccessToken = (
       return undefined;
     token = recovered;
   }
-  return hasCallAccess(request, token) ? token : undefined;
+  return token &&
+    hasCallAccess(request, token) &&
+    matchesSecret(token, request.access.tokenHash, "access")
+    ? token
+    : undefined;
 };
+
+export const checkoutHandoffCode = (token: string, salt: string) =>
+  createHmac("sha256", Buffer.from(token, "base64url"))
+    .update("ringback:checkout-handoff:v1:")
+    .update(Buffer.from(salt, "base64url"))
+    .digest("base64url");
+
+export const newCheckoutHandoff = (
+  token: string,
+  checkoutExpiresAt: Date,
+): NonNullable<RequestDoc["handoff"]> => {
+  const salt = newAccessToken();
+  return {
+    salt,
+    codeHash: secretHash(checkoutHandoffCode(token, salt), "handoff"),
+    expiresAt: new Date(checkoutExpiresAt.getTime() + HANDOFF_GRACE_MS),
+  };
+};
+
+export const checkoutReturnUrl = (request: RequestDoc, token: string) =>
+  request.handoff
+    ? `${request.dashboardUrl}#handoff=${checkoutHandoffCode(token, request.handoff.salt)}`
+    : request.dashboardUrl;
+
+export const redeemCheckoutHandoff = (id: string, code: string) =>
+  Effect.gen(function* () {
+    if (!validAccessSecret(code))
+      return yield* new PaymentError({ code: "not_found" });
+    const mongo = yield* MongoClient;
+    const now = new Date();
+    const token = newAccessToken();
+    const record = yield* Effect.tryPromise(() =>
+      mongo.requests.findOneAndUpdate(
+        {
+          _id: id,
+          "handoff.codeHash": secretHash(code, "handoff"),
+          "handoff.expiresAt": { $gt: now },
+          "handoff.redeemedAt": { $exists: false },
+          "access.expiresAt": { $gt: now },
+          "access.revokedAt": { $exists: false },
+        },
+        {
+          $set: {
+            "handoff.redeemedAt": now,
+            "access.browserTokenHash": secretHash(token),
+          },
+        },
+        { returnDocument: "after" },
+      ),
+    );
+    if (!record) return yield* new PaymentError({ code: "not_found" });
+    return { record, token };
+  });
 
 // Unknown calls and invalid grants have the same response. IDs/rooms never authorize reads.
 export const authorizeCallAccess = (id: string, token: string | undefined) =>

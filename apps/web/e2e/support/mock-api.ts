@@ -8,6 +8,10 @@ export const tokens = {
   a: Buffer.alloc(32, 1).toString("base64url"),
   b: Buffer.alloc(32, 2).toString("base64url"),
 }
+export const handoffs = {
+  a: Buffer.alloc(32, 3).toString("base64url"),
+  b: Buffer.alloc(32, 4).toString("base64url"),
+}
 
 export const recordingSeconds = 4
 
@@ -16,6 +20,9 @@ export interface MockApi {
   stage:
     "unpaid" | "paid" | "dialing" | "active" | "ended" | "expired" | "failed"
   revoked: boolean
+  handoffExpired: boolean
+  handoffUsed: Set<string>
+  legacyCheckout: boolean
   checkoutExpiresAt?: string
   turns?: Turn[]
   requests: { url: string; cookie: string; range?: string }[]
@@ -44,6 +51,9 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
   const state: MockApi = {
     stage: "unpaid",
     revoked: false,
+    handoffExpired: false,
+    handoffUsed: new Set(),
+    legacyCheckout: false,
     requests: [],
   }
   const expires = new Date(Date.now() + 30 * 24 * 3600_000).toISOString()
@@ -73,8 +83,21 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
     const suffix = match[2] ?? ""
     const secret = tokens[id]
     if (suffix === "/access") {
-      if (state.revoked || headers.authorization !== `Bearer ${secret}`)
-        return reply({ error: "not_found" }, 404)
+      const handoff = headers["x-checkout-handoff"]
+      if (state.revoked) return reply({ error: "not_found" }, 404)
+      if (headers.authorization !== `Bearer ${secret}`) {
+        if (headers.authorization || handoff === undefined)
+          return reply({ error: "not_found" }, 404)
+        if (
+          handoff === handoffs[id] &&
+          !state.handoffExpired &&
+          !state.handoffUsed.has(id)
+        ) {
+          state.handoffUsed.add(id)
+        } else if (headers.cookie !== `ringback_access=${secret}`) {
+          return reply({ error: "not_found" }, 404)
+        }
+      }
       return reply({ access_expires_at: expires }, 200, {
         "set-cookie": `ringback_access=${secret}; Path=/api/call/${id}; HttpOnly; SameSite=Lax; Expires=${new Date(expires).toUTCString()}`,
       })
@@ -141,10 +164,18 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
     } satisfies Call)
   })
   await context.route("/checkout", async (route) => {
-    state.stage = "paid"
+    const fragment = state.legacyCheckout ? "" : `#handoff=${handoffs.a}`
     await route.fulfill({
       contentType: "text/html",
-      body: '<a href="/call/a">Return to call</a>',
+      body: `<a href="/checkout/paid">Return to call</a><a href="/call/a${fragment}">Cancel payment</a>`,
+    })
+  })
+  await context.route("/checkout/paid", async (route) => {
+    state.stage = "paid"
+    const fragment = state.legacyCheckout ? "" : `#handoff=${handoffs.a}`
+    await route.fulfill({
+      status: 302,
+      headers: { location: `/call/a${fragment}` },
     })
   })
   return state

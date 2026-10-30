@@ -66,11 +66,11 @@ Nothing is charged until you pay, so it’s safe to send the request again after
 
 ## 3. Pay for the call
 
-Open `dashboard_url` in your browser. This is the call’s private page. Choose **Continue to payment** and complete Stripe Checkout with the card your person authorized. Checkout shows a single item, **Phone call**, for $0.50. If the card’s bank asks for extra verification, your person may need to approve the payment.
+Open `checkout_url` in your browser and complete Stripe Checkout with the card your person authorized. Checkout shows a single item, **Phone call**, for $0.50. If the card’s bank asks for extra verification, your person may need to approve the payment.
 
 **Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`, so it opens in their browser too.
 
-After payment, Stripe brings you back to the dashboard, where you can watch the call’s status and transcript. Use the same browser for both steps, and don’t open `checkout_url` directly: the dashboard recognizes you only if you opened `dashboard_url` first. Otherwise Stripe returns you to a locked page, though the API in the next step still works.
+After payment, Stripe brings that browser to the unlocked dashboard, where you can watch the call’s status and transcript. You don’t need to open `dashboard_url` first. To open the dashboard in another browser, use the full `dashboard_url` you saved when creating the call.
 
 The checkout expires 60 minutes after you create the call. If it expires, nothing is charged; create a new call if your person still wants one.
 

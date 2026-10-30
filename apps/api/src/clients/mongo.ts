@@ -74,8 +74,15 @@ export interface RequestDoc {
   expiresAt: Date;
   access: {
     tokenHash: string;
+    browserTokenHash?: string;
     expiresAt: Date;
     revokedAt?: Date;
+  };
+  handoff?: {
+    codeHash: string;
+    salt: string;
+    expiresAt: Date;
+    redeemedAt?: Date;
   };
   retry?: {
     // Separate from the random call ID; retained even after checkout/access expiry.

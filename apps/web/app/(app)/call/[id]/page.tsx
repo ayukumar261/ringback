@@ -73,12 +73,19 @@ export default function CallPage({
 
 // Trades the link's token for a call-scoped cookie. Without a token, an
 // existing HttpOnly cookie may already authorize this visit.
-async function requestAccess(id: string, token: string | null) {
-  if (!token) return true
+async function requestAccess(
+  id: string,
+  token: string | null,
+  handoff: string | null
+) {
+  if (token === null && handoff === null) return true
   try {
     const response = await fetch(`${API_URL}${callKey(id)}/access`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers:
+        token !== null
+          ? { Authorization: `Bearer ${token}` }
+          : { "X-Checkout-Handoff": handoff! },
       credentials: "same-origin",
       cache: "no-store",
     })
@@ -108,9 +115,11 @@ function CallDashboard({ id }: { id: string }) {
         pending.current = null
       }
       // Share initialization across React's development effect replay.
+      const credentials = new URLSearchParams(fragment.slice(1))
       pending.current ??= requestAccess(
         id,
-        new URLSearchParams(fragment.slice(1)).get("token")
+        credentials.get("token"),
+        credentials.get("handoff")
       )
       pending.current.then((ok) => {
         if (active) setAccess(ok ? "ready" : "unavailable")

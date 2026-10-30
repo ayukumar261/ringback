@@ -34,8 +34,10 @@ import {
   authorizeCallAccess,
   bearerToken,
   callDashboardUrl,
+  checkoutReturnUrl,
   newAccessToken,
   newCallAccess,
+  newCheckoutHandoff,
   recoveredAccessToken,
   retryAccessToken,
   secretHash,
@@ -222,6 +224,7 @@ export const createCallRequest = (
           room,
           dashboardUrl: `${settings.publicWebUrl}/call/${id}`,
         };
+        fresh.handoff = newCheckoutHandoff(token, fresh.expiresAt);
         yield* Effect.tryPromise({
           try: () => mongo.requests.insertOne(fresh),
           catch: (e) => e,
@@ -268,7 +271,7 @@ export const createCallRequest = (
         currency: record.currency,
         maxDuration: record.maxDuration,
         expiresAt: record.expiresAt,
-        returnUrl: record.dashboardUrl,
+        returnUrl: checkoutReturnUrl(record, token),
         terms: record.terms,
         privacy: record.privacy,
       });

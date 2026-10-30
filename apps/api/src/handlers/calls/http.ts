@@ -15,6 +15,7 @@ import {
   authorizeCallAccess,
   bearerToken,
   callDashboardUrl,
+  redeemCheckoutHandoff,
   validAccessSecret,
 } from "../payments/access.js";
 import { PaymentConfig } from "../payments/config.js";
@@ -62,10 +63,28 @@ export const bootstrapCallAccess = callResponse(
     const settings = yield* PaymentConfig;
     if (http.headers.origin !== new URL(settings.publicWebUrl).origin)
       return yield* new PaymentError({ code: "unauthorized" });
-    const token = yield* bearerToken(http.headers.authorization);
-    if (!token) return yield* new PaymentError({ code: "unauthorized" });
     const { id = "" } = yield* HttpRouter.params;
-    const record = yield* authorizeCallAccess(id, token);
+    const handoff = http.headers["x-checkout-handoff"];
+    const grant = yield* Effect.gen(function* () {
+      if (http.headers.authorization !== undefined) {
+        const token = yield* bearerToken(http.headers.authorization);
+        if (!token) return yield* new PaymentError({ code: "unauthorized" });
+        return { record: yield* authorizeCallAccess(id, token), token };
+      }
+      if (handoff === undefined)
+        return yield* new PaymentError({ code: "unauthorized" });
+      return yield* redeemCheckoutHandoff(id, handoff).pipe(
+        Effect.catchTag("PaymentError", (error) => {
+          const token = http.cookies[CALL_COOKIE];
+          return token
+            ? authorizeCallAccess(id, token).pipe(
+                Effect.map((record) => ({ record, token })),
+              )
+            : Effect.fail(error);
+        }),
+      );
+    });
+    const { record, token } = grant;
     const response = yield* json({
       access_expires_at: record.access.expiresAt.toISOString(),
     });

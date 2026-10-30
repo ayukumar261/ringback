@@ -18,7 +18,7 @@ const input: CheckoutInput = {
   currency: "usd",
   maxDuration: 1800,
   expiresAt: new Date(Date.now() + 60 * 60_000),
-  returnUrl: "https://example.com/call/request-test",
+  returnUrl: "https://example.com/call/request-test#handoff=one-time-code",
   terms: {
     version: "2026-10-30",
     url: "https://example.com/terms-and-conditions/2026-10-30",
@@ -68,8 +68,8 @@ describe("Stripe client", () => {
           privacy_url: input.privacy.url,
         },
         expires_at: Math.floor(input.expiresAt.getTime() / 1000),
-        success_url: "https://example.com/call/request-test",
-        cancel_url: "https://example.com/call/request-test",
+        success_url: input.returnUrl,
+        cancel_url: input.returnUrl,
         consent_collection: { terms_of_service: "required" },
         line_items: [
           {

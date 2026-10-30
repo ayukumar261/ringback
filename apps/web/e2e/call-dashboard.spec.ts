@@ -1,5 +1,5 @@
 import { expect, test } from "./support/fixtures"
-import { mockApi, recordingSeconds, tokens } from "./support/mock-api"
+import { handoffs, mockApi, recordingSeconds, tokens } from "./support/mock-api"
 import { web } from "./support/servers"
 
 // Browser tests exercise real cookies and navigation against a controlled API.
@@ -148,6 +148,78 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
     await userContext.close()
   }
 })
+
+test("direct Checkout returns to an unlocked dashboard and strips the handoff", async ({
+  page,
+  context,
+  api,
+}) => {
+  await page.goto("/checkout")
+  expect(await context.cookies(`${web.url}/api/call/a`)).toEqual([])
+  await page.getByRole("link", { name: "Return to call" }).click()
+  await expect(page.getByText("Private task for a")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Getting the call ready" })
+  ).toBeVisible()
+  await expect(page).toHaveURL("/call/a")
+  expect(api.handoffUsed.has("a")).toBe(true)
+  expect(api.requests.every(({ url }) => !url.includes(handoffs.a))).toBe(true)
+  expect(
+    await page.evaluate(() => JSON.stringify({ ...localStorage }))
+  ).not.toContain(handoffs.a)
+  await page.reload()
+  await expect(page.getByText("Private task for a")).toBeVisible()
+  await context.clearCookies()
+  await page.goto(`/call/a#handoff=${handoffs.a}`)
+  await expect(
+    page.getByRole("status", { name: "Call unavailable" })
+  ).toBeVisible()
+})
+
+test("cancel then pay keeps access after the one-time handoff was spent", async ({
+  page,
+  api,
+}) => {
+  await page.goto("/checkout")
+  await page.getByRole("link", { name: "Cancel payment" }).click()
+  await expect(page.getByText("Private task for a")).toBeVisible()
+  expect(api.handoffUsed.has("a")).toBe(true)
+  await page.getByRole("link", { name: "Continue to payment" }).click()
+  await page.getByRole("link", { name: "Return to call" }).click()
+  await expect(
+    page.getByRole("heading", { name: "Getting the call ready" })
+  ).toBeVisible()
+  await expect(page).toHaveURL("/call/a")
+})
+
+for (const scenario of [
+  "expired",
+  "revoked",
+  "wrong-call",
+  "legacy",
+] as const) {
+  test(`Checkout handoff fails closed for ${scenario}`, async ({
+    page,
+    api,
+  }) => {
+    api.handoffExpired = scenario === "expired"
+    api.revoked = scenario === "revoked"
+    api.legacyCheckout = scenario === "legacy"
+    if (scenario === "wrong-call") {
+      await page.goto(`/call/b#handoff=${handoffs.a}`)
+    } else {
+      await page.goto("/checkout")
+      await page.getByRole("link", { name: "Return to call" }).click()
+    }
+    await expect(
+      page.getByRole("status", { name: "Call unavailable" })
+    ).toBeVisible()
+    await expect(page.getByText(/Private task for/)).toHaveCount(0)
+    await expect(page).toHaveURL(
+      scenario === "wrong-call" ? "/call/b" : "/call/a"
+    )
+  })
+}
 
 test("anonymous pages and wrong links reveal no private details", async ({
   page,

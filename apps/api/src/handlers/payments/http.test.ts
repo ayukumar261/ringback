@@ -57,6 +57,8 @@ import {
   newCallAccess,
   secretHash,
   ACCESS_TOKEN_TTL_MS,
+  checkoutHandoffCode,
+  HANDOFF_GRACE_MS,
 } from "./access.js";
 
 import { Preflight } from "../../preflight/preflight.js";
@@ -613,7 +615,7 @@ describe("checkout", () => {
         dashboard_url: `https://example.com/call/${result.call_id}#token=${result.access_token}`,
       });
       expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(
-        `https://example.com/call/${result.call_id}`,
+        `https://example.com/call/${result.call_id}#handoff=${checkoutHandoffCode(result.access_token, (await mongo.requests.findOne({ _id: result.call_id }))!.handoff!.salt)}`,
       );
       const terms = {
         version: TERMS_VERSION,
@@ -689,7 +691,11 @@ describe("checkout", () => {
       await h.run(createCallRequest(input, "earlier-edition", { accessToken }));
       expect(h.createSession.mock.calls[0]![0]).toMatchObject({
         terms,
+        returnUrl: record.dashboardUrl,
       });
+      expect(
+        (await h.mongo.requests.findOne({ _id: record._id }))?.handoff,
+      ).toBeUndefined();
       expect(
         (await h.mongo.requests.findOne({ _id: record._id }))?.terms,
       ).toEqual(terms);
@@ -740,7 +746,7 @@ describe("checkout", () => {
       );
       expect(result.status).toBe("unpaid");
       expect(h.createSession.mock.calls[1]![0]).toMatchObject({
-        returnUrl: `http://localhost:3000/call/${result.call_id}`,
+        returnUrl: h.createSession.mock.calls[0]![0].returnUrl,
         amount: 50,
         terms: {
           version: TERMS_VERSION,
@@ -922,7 +928,17 @@ describe("checkout", () => {
         `${stored.dashboardUrl}#token=${result.access_token}`,
       );
       expect(h.createSession.mock.calls[0]![0].returnUrl).toBe(
-        stored.dashboardUrl,
+        `${stored.dashboardUrl}#handoff=${checkoutHandoffCode(result.access_token, stored.handoff!.salt)}`,
+      );
+      const code = new URLSearchParams(
+        new URL(h.createSession.mock.calls[0]![0].returnUrl).hash.slice(1),
+      ).get("handoff")!;
+      expect(code).not.toBe(result.access_token);
+      expect(Buffer.from(code, "base64url")).toHaveLength(32);
+      expect(stored.handoff?.codeHash).toBe(secretHash(code, "handoff"));
+      expect(JSON.stringify(stored)).not.toContain(code);
+      expect(stored.handoff!.expiresAt.getTime()).toBe(
+        stored.expiresAt.getTime() + HANDOFF_GRACE_MS,
       );
     });
     it("does not disclose or replace credentials on key/body-only retries", async () => {
