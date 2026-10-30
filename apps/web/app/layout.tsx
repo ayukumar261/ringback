@@ -1,7 +1,14 @@
+import type { Metadata } from "next"
 import { Geist_Mono, Inter } from "next/font/google"
 
 import "./globals.css"
 import { cn } from "@/lib/utils"
+
+// Pages leave openGraph unset, so each inherits this one and Next fills og:title and og:description from the page's own.
+export const metadata: Metadata = {
+  metadataBase: new URL("https://corbyn.ai"),
+  openGraph: { siteName: "Corbyn AI", type: "website" },
+}
 
 const inter = Inter({
   subsets: ["latin"],

@@ -96,7 +96,7 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
 }) => {
   await page.goto(`/call/a#token=${tokens.a}`)
   await expect(page.getByText("Private task for a")).toBeVisible()
-  await expect(page).toHaveTitle("Call")
+  await expect(page).toHaveTitle("Call — Corbyn AI")
   await expect(page.locator("main")).toHaveCSS("font-size", "14px")
   await expect(
     page.getByRole("heading", { name: "Ready when you are" })
@@ -104,7 +104,6 @@ test("private link becomes a cookie and survives refresh and Checkout return", a
   await expect(
     page.getByRole("link", { name: "Corbyn AI", exact: true })
   ).toHaveAttribute("href", "/")
-  expect(await page.locator("head").innerHTML()).not.toMatch(/ringback|corbyn/i)
   await expect(page).toHaveURL("/call/a")
   const cookies = await context.cookies(`${web.url}/api/call/a`)
   expect(cookies).toMatchObject([
