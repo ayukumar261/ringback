@@ -35,16 +35,13 @@ export default function WebsiteLayout({
 
         <footer className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-rule pt-5 text-[12px] text-ink-muted">
           <span>© {new Date().getFullYear()} Corbyn AI</span>
-          <nav className="flex flex-wrap gap-2" aria-label="Legal and contact">
+          <nav className="flex flex-wrap gap-2" aria-label="Legal">
             <Link href="/terms-and-conditions" className={link}>
               Terms and Conditions
             </Link>
             <Link href="/privacy-policy" className={link}>
               Privacy Policy
             </Link>
-            <a href="mailto:ayush@corbyn.ai" className={link}>
-              ayush@corbyn.ai
-            </a>
           </nav>
         </footer>
       </Container>
