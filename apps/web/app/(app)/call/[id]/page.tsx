@@ -353,7 +353,7 @@ function CallContent({
           >
             {!turns.error && turns.data?.length ? (
               <Transcript
-                turns={turns.data}
+                turns={estimateRecipientSpans(turns.data, audioStartedAt)}
                 live={live}
                 connected={connected}
                 updates={updates}
@@ -750,6 +750,18 @@ function RecordingPlayer({
 const speakers = { agent: "Assistant", user: "Recipient", tool: "Tool" }
 
 const turnStart = (turn: Turn) => turn.started_at ?? turn.at
+
+// Recipient turns without detected speech span from the previous turn's end to their transcript.
+function estimateRecipientSpans(turns: Turn[], audioStartedAt?: number) {
+  return turns.map((turn, index): Turn => {
+    if (turn.role !== "user" || turn.started_at !== undefined) return turn
+    const previous = turns[index - 1]
+    const start = previous
+      ? (previous.ended_at ?? previous.at)
+      : (audioStartedAt ?? turn.at)
+    return { ...turn, started_at: Math.min(start, turn.at), ended_at: turn.at }
+  })
+}
 
 function offsetLabel(milliseconds: number) {
   return `${milliseconds < 0 ? "−" : ""}${formatTime(Math.abs(milliseconds) / 1000)}`

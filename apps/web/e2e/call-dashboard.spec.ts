@@ -421,6 +421,74 @@ test("recording highlighting follows speech spans through overlap and silence", 
   await expect(current).toHaveCount(0)
 })
 
+test("recipient turns without speech spans seek from the previous turn's end", async ({
+  page,
+  api,
+}) => {
+  api.stage = "ended"
+  api.turns = [
+    {
+      room: "room-a",
+      seq: 1,
+      role: "user",
+      text: "Thanks for calling.",
+      at: 2010,
+    },
+    {
+      room: "room-a",
+      seq: 2,
+      role: "agent",
+      text: "How can I help?",
+      at: 2020,
+      started_at: 2000,
+      ended_at: 3000,
+    },
+    {
+      room: "room-a",
+      seq: 3,
+      role: "user",
+      text: "One moment.",
+      at: 3610,
+    },
+    {
+      room: "room-a",
+      seq: 4,
+      role: "agent",
+      text: "Sure.",
+      at: 3620,
+      started_at: 3600,
+      ended_at: 4400,
+    },
+  ]
+  await page.goto(`/call/a#token=${tokens.a}`)
+  const audio = page.locator("audio")
+  const current = page.locator('li[aria-current="time"]')
+  await expect
+    .poll(() => audio.evaluate((el: HTMLAudioElement) => el.duration))
+    .toBe(recordingSeconds)
+
+  for (const [text, seconds] of [
+    ["Thanks for calling.", 0],
+    ["One moment.", 2],
+  ] as const) {
+    await page.getByText(text, { exact: true }).click()
+    await expect
+      .poll(() => audio.evaluate((el: HTMLAudioElement) => el.currentTime))
+      .toBeCloseTo(seconds)
+    await expect(current).toContainText(text)
+  }
+
+  const scrub = (seconds: number) =>
+    audio.evaluate((el: HTMLAudioElement, position) => {
+      el.currentTime = position
+      el.dispatchEvent(new Event("timeupdate"))
+    }, seconds)
+  await scrub(1.5)
+  await expect(current).toContainText("How can I help?")
+  await scrub(2.65)
+  await expect(current).toContainText("Sure.")
+})
+
 test("reading earlier messages pauses following without stopping live updates", async ({
   page,
   api,

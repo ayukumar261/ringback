@@ -131,18 +131,41 @@ func TestAnalyzerInitializationAndInferenceFailure(t *testing.T) {
 		})
 	}
 }
-func TestAnalyzerTimeoutDisablesInsteadOfDroppingBufferedTail(t *testing.T) {
+func TestAnalyzerTimeoutSkipsOnlyThatTranscript(t *testing.T) {
 	a := newAnalyzer(silentLog, func() *Detector { return NewDetector(&scriptedVoice{probability: .9, lag: true}) })
+	defer a.Close()
 	a.Record(nil, nil)
 	start := time.Now()
-	got := a.Take()
-	if len(got) != 0 || time.Since(start) > time.Second {
-		t.Fatal("timeout did not fail closed promptly")
+	if got := a.Take(); len(got) != 0 || time.Since(start) > time.Second {
+		t.Fatal("timeout did not return promptly without a span")
 	}
-	a.Close()
+	for range 3 {
+		a.Record(nil, nil)
+	}
+	if got := a.Take(); !slices.Equal(got, []Segment{{20 * time.Millisecond, 80 * time.Millisecond}}) {
+		t.Fatalf("next transcript got %v, want only the speech after the skipped cutoff", got)
+	}
 	select {
 	case <-a.failed:
+		t.Fatal("timeout disabled timestamps for the rest of the call")
 	default:
-		t.Fatal("timeout did not disable timestamps")
+	}
+}
+
+func TestAnalyzerKeepsTimestampsWhileWorkersAreBusy(t *testing.T) {
+	for range cap(speechWorkers) {
+		speechWorkers <- struct{}{}
+	}
+	a := newAnalyzer(silentLog, func() *Detector { return NewDetector(&scriptedVoice{probability: .9}) })
+	defer a.Close()
+	stall := 2 * time.Second
+	for range stall / audio.FrameDuration {
+		a.Record(nil, nil)
+	}
+	for range cap(speechWorkers) {
+		<-speechWorkers
+	}
+	if got := a.Take(); !slices.Equal(got, []Segment{{0, stall}}) {
+		t.Fatalf("got %v after a %v stall, want the whole span", got, stall)
 	}
 }

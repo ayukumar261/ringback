@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	analysisQueue = 50 // at most one second of audio, approximately 192 KB
+	analysisQueue = 250 // at most five seconds of audio, approximately 966 KB
 	analysisWait  = 250 * time.Millisecond
 )
 
@@ -100,6 +100,7 @@ func (a *Analyzer) Record(caller, agent []byte) {
 
 // Take captures a cutoff before waiting. Callers must not hold the recording
 // mutex while waiting: the resampler and model may need another real frame.
+// A live timeout skips one transcript: its queued cutoff still claims its speech.
 func (a *Analyzer) Take() []Segment {
 	a.mu.Lock()
 	closing := a.closing
@@ -142,7 +143,7 @@ func (a *Analyzer) Take() []Segment {
 	case <-a.failed:
 		return nil
 	case <-timer.C:
-		a.fail(fmt.Errorf("speech: transcript inference timeout"))
+		a.log.Warn("caller speech timestamp skipped", "err", "speech: transcript inference timeout")
 		return nil
 	}
 }
