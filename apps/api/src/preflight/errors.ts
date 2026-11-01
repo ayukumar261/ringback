@@ -5,7 +5,6 @@ export class PreflightError extends Data.TaggedError("PreflightError")<{
     | "invalid_destination"
     | "unsupported_country"
     | "blocked_number"
-    | "toll_free_not_allowed"
     | "unsupported_line_type"
     | "line_type_unavailable"
     | "lookup_unavailable"

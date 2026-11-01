@@ -14,7 +14,6 @@ import { AudioConfig } from "./handlers/audio/config.js";
 import { CallsConfig } from "./handlers/calls/config.js";
 import { DispatchLive } from "./pipeline/dispatch.js";
 import { TwilioClient } from "./clients/twilio.js";
-import { PreflightConfig } from "./preflight/config.js";
 import { Preflight } from "./preflight/preflight.js";
 import { ElevenLabsClient } from "./clients/elevenlabs.js";
 import { ExpenseCollectorLive } from "./pipeline/collector.js";
@@ -63,7 +62,6 @@ const AppLive = Layer.mergeAll(
       PaymentConfig.Default,
       AudioConfig.Default,
       CallsConfig.Default,
-      PreflightConfig.Default,
     ),
   ),
   Layer.provide(TwilioClient.Default),

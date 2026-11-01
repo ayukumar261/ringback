@@ -108,21 +108,20 @@ The service-specific examples in [`apps/api/.env.example`](apps/api/.env.example
 
 Paid call creation also needs `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` for Twilio Lookup v2. Keep these server-side. Number validity, country, and Line Type Intelligence must pass before Ringback creates a Checkout session; unavailable or unknown Lookup data does not approve a call. The API can still start and serve reads without Twilio credentials, but new eligible call requests return `503 lookup_unavailable`.
 
-Destination configuration (see the API's `.env.example` for defaults):
+Destination policy is fixed in code. US numbers support landline, mobile, fixed VoIP, and non-fixed VoIP. US territories and geographic numbers outside the US are blocked; `+1` alone never establishes eligibility. Premium, shared-cost, personal, voicemail, pager, and universal-access line types are unsupported.
+
+Shared NANP toll-free numbers (`800`, `833`, `844`, `855`, `866`, `877`, `888`) are supported independently of country attribution. Lookup must confirm the number is valid and classify it as toll-free.
+
+Lookup configuration (see the API's `.env.example` for defaults):
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `RINGBACK_ALLOWED_COUNTRIES` | `US` | US-only; configuring Canada or any other country is rejected at startup. `+1` alone never establishes eligibility. |
-| `RINGBACK_ALLOWED_US_TERRITORIES` | empty | Optional subset of `AS,GU,MP,PR,VI`; territories are blocked otherwise. |
-| `RINGBACK_ALLOWED_LINE_TYPES` | `landline,mobile,fixedVoip,nonFixedVoip` | Allowed voice line types. Premium, shared-cost, personal, voicemail, pager, and universal-access types are unsupported. |
-| `RINGBACK_ALLOW_NANP_TOLL_FREE` | `false` | Explicit opt-in to shared NANP toll-free numbers, independent of country attribution; Lookup must classify them as toll-free. |
-| `RINGBACK_BLOCKED_PHONE_PREFIXES` | empty | Additional comma-separated E.164 prefixes identified as high risk; these only restrict calling. |
 | `RINGBACK_LOOKUP_CACHE_TTL_SECONDS` | `86400` | Successful known results expire after this many seconds (maximum 86400), including when Redis retains an old entry. |
 | `RINGBACK_LOOKUP_TIMEOUT_MS` | `5000` | Lookup request timeout, bounded to 1–30000 milliseconds. Cache reads/writes have separate short timeouts and are best effort. |
 
-The [Twilio Line Type Intelligence documentation](https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence) describes the paid Lookup package. Canada and other non-US NANP destinations return `422 unsupported_country` before Lookup, so Canadian NPAC access is not needed. Missing or unknown US line-type data returns `503 line_type_unavailable`; a provider timeout or invalid response returns `503 lookup_unavailable`; authentication failure returns `503 lookup_access_denied`.
+The [Twilio Line Type Intelligence documentation](https://www.twilio.com/docs/lookup/v2-api/line-type-intelligence) describes the paid Lookup package. Geographic numbers in Canada and other non-US NANP destinations return `422 unsupported_country` before Lookup, so Canadian NPAC access is not needed for those numbers. Missing or unknown line-type data returns `503 line_type_unavailable`; a provider timeout or invalid response returns `503 lookup_unavailable`; authentication failure returns `503 lookup_access_denied`.
 
-Before enabling destinations in production, verify the account's [Elastic SIP Trunking geographic permissions](https://www.twilio.com/docs/sip-trunking/voice-dialing-geographic-permissions): enable only the intended US destinations' low-risk numbers, with high-risk toll-fraud and special-services ranges disabled. Twilio does not publish all high-risk ranges; its carrier permissions remain an additional enforcement layer. Lookup alone does not establish that a destination is low-risk. The US-only country policy follows the current Terms and Conditions; territories and shared NANP toll-free destinations remain separate explicit opt-ins.
+Before enabling destinations in production, verify the account's [Elastic SIP Trunking geographic permissions](https://www.twilio.com/docs/sip-trunking/voice-dialing-geographic-permissions): enable only the intended US destinations' low-risk numbers, with high-risk toll-fraud and special-services ranges disabled. Twilio does not publish all high-risk ranges; its carrier permissions remain an additional enforcement layer. Lookup alone does not establish that a destination is low-risk. The US-only country policy follows the current Terms and Conditions; territories are blocked, while shared NANP toll-free destinations are supported.
 
 Lookup does not establish recipient consent or do-not-call status. The current policy leaves recipient permissions with the requester and does not collect a last-verified consent date, so this implementation makes no Reassigned Number requests and adds no AI prompt screening.
 
@@ -283,7 +282,7 @@ curl -X POST http://localhost:3001/call \
   }'
 ```
 
-The destination must use E.164 format and pass the US-only destination and line-type checks. Emergency/service codes, premium ranges, and configured high-risk prefixes are blocked before Lookup. Destination refusals return HTTP `422` with one of `invalid_destination`, `unsupported_country`, `blocked_number`, `toll_free_not_allowed`, or `unsupported_line_type`; Lookup failures return HTTP `503` as described under environment configuration. Rejected new requests create neither a call request nor a Checkout session. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
+The destination must use E.164 format and pass the US or shared NANP toll-free destination and line-type checks. Emergency/service codes and premium ranges are blocked before Lookup. Destination refusals return HTTP `422` with one of `invalid_destination`, `unsupported_country`, `blocked_number`, or `unsupported_line_type`; Lookup failures return HTTP `503` as described under environment configuration. Rejected new requests create neither a call request nor a Checkout session. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
 
 ```json
 {
