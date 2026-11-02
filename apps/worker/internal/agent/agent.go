@@ -78,7 +78,8 @@ func (Tool) isEvent() {}
 
 // Start is what the bridge hands a provider once the call is answered.
 type Start struct {
-	Prompt string // the call's prompt, empty means the provider's own default prompt runs
+	Prompt    string // the task from the requesting user, who is not on the call
+	Direction string // inbound or outbound; determines the provider's call context
 }
 
 // Provider opens conversations with one voice agent.

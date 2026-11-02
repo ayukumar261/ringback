@@ -121,14 +121,14 @@ func audioFrame(pcm []byte, id int) string {
 func TestStartHappyPath(t *testing.T) {
 	state, client := newFake(t, func(ctx context.Context, conn *websocket.Conn) {
 		m := expectInit(t, ctx, conn)
-		if got := promptOf(m); got != "Be brief." {
+		if got := promptOf(m); !strings.HasPrefix(got, prompt) || !strings.Contains(got, `"Be brief."`) {
 			t.Errorf("init prompt = %q", got)
 		}
 		sendRaw(t, ctx, conn, metaFrame("conv_1", "pcm_48000", "pcm_48000"))
 		sendRaw(t, ctx, conn, audioFrame([]byte("hi"), 1))
 		waitClose(ctx, conn)
 	})
-	conv, err := client.Start(t.Context(), agent.Start{Prompt: "Be brief."})
+	conv, err := client.Start(t.Context(), agent.Start{Prompt: "Be brief.", Direction: "outbound"})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

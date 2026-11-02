@@ -224,9 +224,11 @@ func TestEncodeGolden(t *testing.T) {
 			want: `{"type":"conversation_initiation_client_data"}`,
 		},
 		{
-			name: "init carries the call's prompt",
-			got:  func() ([]byte, error) { return encodeInit(agent.Start{Prompt: "Be brief."}) },
-			want: `{"type":"conversation_initiation_client_data","conversation_config_override":{"agent":{"prompt":{"prompt":"Be brief."}}}}`,
+			name: "inbound keeps the dashboard configuration",
+			got: func() ([]byte, error) {
+				return encodeInit(agent.Start{Direction: "inbound", Prompt: "Be brief."})
+			},
+			want: `{"type":"conversation_initiation_client_data"}`,
 		},
 	}
 	for _, tt := range tests {

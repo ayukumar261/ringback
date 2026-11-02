@@ -69,7 +69,7 @@ func Run(ctx context.Context, roomName string, opts Opts) error {
 	}
 	// the answered SIP participant carries the direction and, on outbound, the prompt the call runs on
 	c := rm.Caller()
-	conv, err := opts.Agent.Start(ctx, agent.Start{Prompt: c.Prompt})
+	conv, err := opts.Agent.Start(ctx, agent.Start{Prompt: c.Prompt, Direction: c.Direction})
 	if err != nil {
 		rm.Close()
 		return setupErr(ctx, err)

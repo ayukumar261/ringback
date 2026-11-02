@@ -193,7 +193,13 @@ Before starting the worker, configure the services it connects to:
 
 1. **LiveKit:** use matching API credentials and send room webhooks to the worker's `POST /livekit` endpoint. Locally, that is `http://127.0.0.1:8080/livekit`; a remote LiveKit server needs an address it can reach. Set `webhook.api_key` in [`deploy/config/livekit.yaml`](deploy/config/livekit.yaml) to your LiveKit key.
 2. **SIP:** configure your provider and LiveKit trunks. The files in [`deploy/sip`](deploy/sip) contain the current Twilio setup; replace the phone numbers and trunk address for your environment. Keep the outbound trunk name `twilio-outbound`, which the API looks up by name. Inbound dispatch must create rooms beginning with `call`.
-3. **ElevenLabs:** configure the agent's input and output audio as `pcm_48000`. The worker checks both formats when connecting. Allow prompt overrides for outbound calls. For keypad navigation, configure a client tool named `send_dtmf` with a required string parameter named `digits` and a tool response.
+3. **ElevenLabs:** configure the agent's input and output audio as `pcm_48000`. The worker checks both formats when connecting. Allow System prompt overrides for outbound calls and leave the first message empty so the task determines the opening. For keypad navigation, configure a client tool named `send_dtmf` with a required string parameter named `digits` and a tool response. Enable the `end_call` system tool to let the agent hang up.
+
+Outbound calls prepend the versioned [`prompt.md`](apps/worker/internal/providers/elevenlabs/prompt.md) to the requester's task. It makes clear that the requester is absent and the agent is calling the recipient, avoids delegation introductions, and asks for clear, natural speech with honest AI identification when asked. The task is JSON-quoted inside delimiters so task text cannot close them. Inbound calls retain the dashboard prompt and voice.
+
+Configure the voice in the ElevenLabs console. The worker uses that voice for all calls and does not override or persist the voice ID.
+
+The ElevenLabs [OpenAPI schema](https://api.elevenlabs.io/openapi.json) does not declare a character limit for the agent prompt override. The worker preserves the full task, including the API's maximum 16,000-character input, plus the base prompt. The configured LLM's context window still applies; no task or base rules are silently truncated.
 
 With valid credentials and a reachable LiveKit WebSocket URL in `.env`, start the worker in another terminal:
 

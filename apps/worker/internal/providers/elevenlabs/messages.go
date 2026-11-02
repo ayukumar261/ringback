@@ -2,6 +2,7 @@ package elevenlabs
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -182,11 +183,20 @@ type agentPrompt struct {
 	Prompt string `json:"prompt"`
 }
 
-// encodeInit builds the conversation_initiation_client_data frame, leaving the dashboard prompt in charge when the call has none.
+//go:embed prompt.md
+var prompt string
+
+// encodeInit applies our outbound rules and keeps inbound calls on the dashboard configuration.
 func encodeInit(s agent.Start) ([]byte, error) {
 	f := initFrame{Type: "conversation_initiation_client_data"}
-	if s.Prompt != "" {
-		f.Config = &callConfig{Agent: &agentConfig{Prompt: &agentPrompt{Prompt: s.Prompt}}}
+	if s.Direction == "outbound" {
+		// JSON quoting escapes delimiters inside the task while retaining its contents.
+		task, err := json.Marshal(s.Prompt)
+		if err != nil {
+			return nil, err
+		}
+		combined := prompt + "\n<end_user_task format=\"json-string\">\n" + string(task) + "\n</end_user_task>"
+		f.Config = &callConfig{Agent: &agentConfig{Prompt: &agentPrompt{Prompt: combined}}}
 	}
 	return json.Marshal(f)
 }
