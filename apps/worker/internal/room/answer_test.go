@@ -83,6 +83,8 @@ func TestOnAttributesChangedIgnoresOthers(t *testing.T) {
 		{"speaking": "true"},
 		{livekit.AttrSIPCallStatus: "call_incoming"},
 		{livekit.AttrSIPCallStatus: "participant_joined"},
+		{livekit.AttrSIPCallStatus: "dialing"},
+		{livekit.AttrSIPCallStatus: "ringing"},
 		{livekit.AttrSIPCallStatus: "disconnected"},
 		{livekit.AttrSIPCallStatus: "error"},
 		{livekit.AttrSIPCallStatus: ""},

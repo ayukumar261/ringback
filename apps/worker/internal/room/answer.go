@@ -22,7 +22,8 @@ var ErrNotAnswered = errors.New("room: not answered")
 func (r *Room) WaitForAnswer(ctx context.Context) error {
 	for _, rp := range r.room.GetRemoteParticipants() {
 		if rp.Attributes()[livekit.AttrSIPCallStatus] == sipStatusActive {
-			return nil
+			r.markAnswered()
+			break
 		}
 	}
 	return waitForAnswer(ctx, r.answered, r.done, r.Err, answerTimeout)
@@ -47,6 +48,11 @@ func waitForAnswer(ctx context.Context, answered, done <-chan struct{}, roomErr 
 	}
 }
 
+// onParticipantConnected also handles SIP participants that are already active on arrival.
+func (r *Room) onParticipantConnected(rp *lksdk.RemoteParticipant) {
+	r.onAttributesChanged(rp.Attributes(), rp)
+}
+
 // onAttributesChanged watches SIP call status changes for the answer gate.
 func (r *Room) onAttributesChanged(changed map[string]string, participant lksdk.Participant) {
 	if participant != nil {
@@ -62,11 +68,12 @@ func (r *Room) onAttributesChanged(changed map[string]string, participant lksdk.
 	}
 }
 
-// markAnswered unblocks WaitForAnswer, at most once.
+// markAnswered starts recording and unblocks WaitForAnswer, at most once.
 func (r *Room) markAnswered() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.answeredSet {
+	if !r.answeredSet && !r.ended {
+		r.tap.start()
 		r.answeredSet = true
 		close(r.answered)
 	}

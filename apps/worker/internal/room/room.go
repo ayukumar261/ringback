@@ -15,7 +15,6 @@ import (
 
 	"github.com/ayukumar261/ringback/apps/worker/internal/audio"
 	"github.com/ayukumar261/ringback/apps/worker/internal/speech"
-	"github.com/ayukumar261/ringback/apps/worker/internal/wav"
 )
 
 const (
@@ -99,11 +98,15 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 		cancel:    cancel,
 		onSIP:     opts.OnSIP,
 	}
+	if opts.AudioDir != "" {
+		r.audio = opts.RoomName + ".wav"
+		r.tap = newTap(filepath.Join(opts.AudioDir, r.audio), log)
+	}
 
 	cb := &lksdk.RoomCallback{
 		OnDisconnectedWithReason:  r.onDisconnected,
 		OnParticipantDisconnected: r.onParticipantDisconnected,
-		OnParticipantConnected:    func(rp *lksdk.RemoteParticipant) { r.rememberCaller(rp.Attributes()) },
+		OnParticipantConnected:    r.onParticipantConnected,
 		OnReconnecting:            func() { log.Info("room reconnecting") },
 		OnReconnected:             func() { log.Info("room reconnected") },
 		ParticipantCallback: lksdk.ParticipantCallback{
@@ -119,21 +122,12 @@ func Join(ctx context.Context, opts Opts) (*Room, error) {
 	}, cb, lksdk.WithConnectTimeout(connectTimeout))
 	if err != nil {
 		cancel()
+		r.tap.close()
 		return nil, fmt.Errorf("room: connect: %w", err)
 	}
 	r.room = lkroom
 	for _, rp := range lkroom.GetRemoteParticipants() {
-		r.rememberCaller(rp.Attributes())
-	}
-	if opts.AudioDir != "" {
-		w, err := wav.NewWriter(filepath.Join(opts.AudioDir, opts.RoomName+".wav"), audio.SampleRate, 2)
-		if err != nil {
-			lkroom.Disconnect()
-			cancel()
-			return nil, fmt.Errorf("room: open audio: %w", err)
-		}
-		r.tap = newTap(w, log)
-		r.audio = opts.RoomName + ".wav"
+		r.onParticipantConnected(rp)
 	}
 	go r.closer()
 
@@ -191,8 +185,13 @@ func (r *Room) Enqueue(pcm []byte) {
 // Flush drops all queued agent audio on a barge-in.
 func (r *Room) Flush() { r.buf.Flush() }
 
-// AudioFile reports the recording's file name inside AudioDir, empty when recording is off.
-func (r *Room) AudioFile() string { return r.audio }
+// AudioFile reports the recording's file name inside AudioDir, empty until audio is recorded.
+func (r *Room) AudioFile() string {
+	if r.StartedAt().IsZero() {
+		return ""
+	}
+	return r.audio
+}
 
 // StartedAt reports when the first recording frame was written, or zero when recording is off.
 func (r *Room) StartedAt() time.Time { return r.tap.StartedAt() }

@@ -15,13 +15,14 @@ const callerQueueCap = 4
 
 // tap records what each side heard as one stereo frame per playout tick.
 type tap struct {
-	log *slog.Logger
-	w   *wav.Writer
+	log  *slog.Logger
+	path string
+	w    *wav.Writer
 
 	mu      sync.Mutex
 	caller  [][]byte // decoded caller frames waiting for a tick, oldest first
 	tone    []byte   // key press audio still waiting to be mixed into the agent channel
-	stopped bool     // set after a write error so the call outlives the recording
+	stopped bool     // set after close or an I/O error so the call outlives the recording
 	started time.Time
 	frames  int64
 	speech  speechAnalyzer
@@ -34,9 +35,29 @@ type speechAnalyzer interface {
 	Close()
 }
 
-// newTap wraps a writer whose left channel is the caller and right channel the agent.
-func newTap(w *wav.Writer, log *slog.Logger) *tap {
-	return &tap{log: log, w: w, speech: speech.NewAnalyzer(log)}
+// newTap prepares a recording without creating a file until the call is answered.
+func newTap(path string, log *slog.Logger) *tap {
+	return &tap{log: log, path: path}
+}
+
+// start opens the stereo recording once: caller on the left, agent on the right.
+func (t *tap) start() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.w != nil || t.stopped {
+		return
+	}
+	w, err := wav.NewWriter(t.path, audio.SampleRate, 2)
+	if err != nil {
+		t.stopped = true
+		t.log.Warn("stopping call audio recording", "err", err)
+		return
+	}
+	t.w = w
+	t.speech = speech.NewAnalyzer(t.log)
 }
 
 // offer appends a caller frame to the queue, dropping the oldest once the cap is reached.
@@ -45,11 +66,14 @@ func (t *tap) offer(pcm []byte) {
 		return
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.w == nil || t.stopped {
+		return
+	}
 	if len(t.caller) == callerQueueCap {
 		t.pop()
 	}
 	t.caller = append(t.caller, pcm)
-	t.mu.Unlock()
 }
 
 // pop removes and returns the oldest queued caller frame, or nil when the queue is empty.
@@ -75,7 +99,7 @@ func (t *tap) press(key rune) {
 		return
 	}
 	t.mu.Lock()
-	if !t.stopped {
+	if t.w != nil && !t.stopped {
 		t.tone = append(t.tone, pcm...)
 	}
 	t.mu.Unlock()
@@ -88,10 +112,10 @@ func (t *tap) record(agent []byte) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	caller := t.pop()
-	if t.stopped {
+	if t.w == nil || t.stopped {
 		return
 	}
+	caller := t.pop()
 	if len(t.tone) > 0 {
 		n := min(len(t.tone), audio.FrameBytes)
 		agent = audio.Mix(agent, t.tone[:n])
@@ -139,7 +163,13 @@ func (t *tap) Speech() []speech.Segment {
 	if t == nil {
 		return nil
 	}
-	return t.speech.Take()
+	t.mu.Lock()
+	analyzer := t.speech
+	t.mu.Unlock()
+	if analyzer == nil {
+		return nil
+	}
+	return analyzer.Take()
 }
 
 // close patches the wav header and closes the file.
@@ -149,8 +179,14 @@ func (t *tap) close() error {
 	}
 	t.mu.Lock()
 	t.stopped = true
-	err := t.w.Close()
+	var err error
+	if t.w != nil {
+		err = t.w.Close()
+	}
+	analyzer := t.speech
 	t.mu.Unlock()
-	t.speech.Close()
+	if analyzer != nil {
+		analyzer.Close()
+	}
 	return err
 }

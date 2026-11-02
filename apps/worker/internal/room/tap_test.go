@@ -181,9 +181,46 @@ func TestTapNilIsInert(t *testing.T) {
 	}
 	rec.offer(toneFrame(lowHz))
 	rec.press('1')
+	rec.start()
 	rec.record(make([]byte, audio.FrameBytes))
 	if err := rec.close(); err != nil {
 		t.Fatalf("nil tap close returned %v", err)
+	}
+}
+
+func TestTapClosedBeforeAnswerStaysOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "call.wav")
+	rec := newTap(path, discard)
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+	rec.start()
+	rec.offer(toneFrame(lowHz))
+	rec.record(nil)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("recording after close exists: %v", err)
+	}
+	if rec.Recorded() != 0 || !rec.StartedAt().IsZero() || rec.Speech() != nil {
+		t.Fatal("closed recording advanced after a late answer")
+	}
+}
+
+func TestTapStopsAfterOpenError(t *testing.T) {
+	var logged bytes.Buffer
+	rec := newTap(filepath.Join(t.TempDir(), "missing", "call.wav"), slog.New(slog.NewTextHandler(&logged, nil)))
+	for range 2 {
+		rec.start()
+		rec.offer(toneFrame(lowHz))
+		rec.record(nil)
+	}
+	if err := rec.close(); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Recorded() != 0 || !rec.StartedAt().IsZero() || rec.Speech() != nil {
+		t.Fatal("failed recording reported audio")
+	}
+	if n := strings.Count(logged.String(), "stopping call audio recording"); n != 1 {
+		t.Fatalf("logged the stop %d times, want once", n)
 	}
 }
 
@@ -463,11 +500,9 @@ func BenchmarkTapConcurrentSpeech(b *testing.B) {
 				dir := b.TempDir()
 				for n := range calls {
 					path := fmt.Sprintf("%s/%d.wav", dir, n)
-					w, err := wav.NewWriter(path, audio.SampleRate, 2)
-					if err != nil {
-						b.Fatal(err)
-					}
-					taps = append(taps, newTap(w, discard))
+					rec := newTap(path, discard)
+					rec.start()
+					taps = append(taps, rec)
 					paths = append(paths, path)
 				}
 				var before, after syscall.Rusage

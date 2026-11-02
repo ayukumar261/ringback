@@ -19,7 +19,7 @@ ElevenLabs provides the hosted voice agent. Ringback runs the calling infrastruc
 - **Prompts per call.** Outbound requests set the agent's prompt; inbound calls use the agent's configured prompt.
 - **Phone menu navigation.** The agent can press keypad digits through the `send_dtmf` client tool.
 - **Live transcripts.** Follow user, agent, and tool turns as they arrive, including transcript corrections.
-- **Call history and playback.** Store call metadata and transcripts in MongoDB, with optional stereo WAV recordings.
+- **Call history and playback.** Store call metadata and transcripts in MongoDB, with optional stereo WAV recordings that start when the call is answered. Ringing is excluded, and unanswered calls have no recording.
 
 ## How it works
 

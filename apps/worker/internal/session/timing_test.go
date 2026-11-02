@@ -519,11 +519,19 @@ func TestLiveSpeechInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rm.Close()
-	caller, err := lksdk.ConnectToRoom(url, lksdk.ConnectInfo{APIKey: "devkey", APISecret: "secret", RoomName: name, ParticipantIdentity: "test-caller"}, nil)
+	caller, err := lksdk.ConnectToRoom(url, lksdk.ConnectInfo{
+		APIKey: "devkey", APISecret: "secret", RoomName: name, ParticipantIdentity: "test-caller",
+		ParticipantAttributes: map[string]string{livekit.AttrSIPCallStatus: "active"},
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer caller.Disconnect()
+	answerCtx, answerCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer answerCancel()
+	if err := rm.WaitForAnswer(answerCtx); err != nil {
+		t.Fatal(err)
+	}
 	track, err := lksdk.NewLocalTrack(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus})
 	if err != nil {
 		t.Fatal(err)
