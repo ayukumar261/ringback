@@ -15,8 +15,8 @@ ElevenLabs provides the hosted voice agent. Ringback runs the calling infrastruc
 
 ## Features
 
-- **Inbound and outbound calls.** Answer calls through a SIP trunk or purchase an outbound call with `POST /call`.
-- **Prompts per call.** Outbound requests set the agent's prompt; inbound calls use the agent's configured prompt.
+- **Outbound calls only.** Purchase a call with `POST /call`. The number does not answer incoming calls.
+- **Prompts per call.** Each request sets the agent's prompt.
 - **Phone menu navigation.** The agent can press keypad digits through the `send_dtmf` client tool.
 - **Live transcripts.** Follow user, agent, and tool turns as they arrive, including transcript corrections.
 - **Call history and playback.** Store call metadata and transcripts in MongoDB, with optional stereo WAV recordings that start when the call is answered. Ringing is excluded, and unanswered calls have no recording.
@@ -192,10 +192,10 @@ Keep these exports in the terminal used to run the worker and its tests. Missing
 Before starting the worker, configure the services it connects to:
 
 1. **LiveKit:** use matching API credentials and send room webhooks to the worker's `POST /livekit` endpoint. Locally, that is `http://127.0.0.1:8080/livekit`; a remote LiveKit server needs an address it can reach. Set `webhook.api_key` in [`deploy/config/livekit.yaml`](deploy/config/livekit.yaml) to your LiveKit key.
-2. **SIP:** configure your provider and LiveKit trunks. The files in [`deploy/sip`](deploy/sip) contain the current Twilio setup; replace the phone numbers and trunk address for your environment. Keep the outbound trunk name `twilio-outbound`, which the API looks up by name. Inbound dispatch must create rooms beginning with `call`.
+2. **SIP:** configure your provider and the LiveKit outbound trunk. [`deploy/sip/outbound-trunk.json`](deploy/sip/outbound-trunk.json) contains the current Twilio setup; replace the phone number and trunk address for your environment. Keep the trunk name `twilio-outbound`, which the API looks up by name. Leave the Twilio trunk without an enabled origination URI so the number never forwards incoming calls.
 3. **ElevenLabs:** configure the agent's input and output audio as `pcm_48000`. The worker checks both formats when connecting. Allow System prompt overrides for outbound calls and leave the first message empty so the task determines the opening. For keypad navigation, configure a client tool named `send_dtmf` with a required string parameter named `digits` and a tool response. Enable the `end_call` system tool to let the agent hang up.
 
-Outbound calls prepend the versioned [`prompt.md`](apps/worker/internal/providers/elevenlabs/prompt.md) to the requester's task. It makes clear that the requester is absent and the agent is calling the recipient, avoids delegation introductions, and asks for clear, natural speech with honest AI identification when asked. The task is JSON-quoted inside delimiters so task text cannot close them. Inbound calls retain the dashboard prompt and voice.
+Outbound calls prepend the versioned [`prompt.md`](apps/worker/internal/providers/elevenlabs/prompt.md) to the requester's task. It makes clear that the requester is absent and the agent is calling the recipient, avoids delegation introductions, and asks for clear, natural speech with honest AI identification when asked. The task is JSON-quoted inside delimiters so task text cannot close them.
 
 Configure the voice in the ElevenLabs console. The worker uses that voice for all calls and does not override or persist the voice ID.
 
@@ -417,7 +417,7 @@ The current deployment flow is:
 
 1. [GitHub Actions](.github/workflows/deploy.yml) builds and pushes all three application images on pushes to `main`, then sends a signed request to the deployment webhook.
 2. [`deploy/deploy.sh`](deploy/deploy.sh) runs from `/opt/ringback`, resets that checkout to `origin/main`, pulls images, and starts the Compose services.
-3. The script creates or updates LiveKit SIP trunks and the dispatch rule, applies the SIP firewall rules, and reloads Caddy.
+3. The script creates or updates the outbound LiveKit SIP trunk, deletes any inbound trunk or dispatch rule, applies the SIP firewall rules, and reloads Caddy.
 
 To adapt this deployment, configure the root `.env`, image names, domain in [`deploy/host/Caddyfile`](deploy/host/Caddyfile), LiveKit webhook key, and SIP settings. The host scripts expect Docker Compose, the `lk` CLI, `jq`, `iptables`, Caddy, and systemd; the deployment hook service also uses the `webhook` binary. GitHub Actions expects `RINGBACK_HOOK_URL` and `RINGBACK_HOOK_SECRET`, with the same hook secret installed on the host as described in [`deploy/host/hook.env.example`](deploy/host/hook.env.example).
 

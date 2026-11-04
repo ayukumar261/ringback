@@ -9,10 +9,8 @@ cd /opt/ringback
 # LiveKit CLI needs $HOME set
 export HOME="${HOME:-/root}"
 
-# The SIP setup we want, found on the live server by the names inside these files
-INBOUND_TRUNK_JSON=deploy/sip/inbound-trunk.json
+# The outbound trunk we want, found on the live server by the name inside this file
 OUTBOUND_TRUNK_JSON=deploy/sip/outbound-trunk.json
-RULE_JSON=deploy/sip/dispatch-rule.json
 
 # Fall back to the deployment .env when LiveKit creds aren't already in the environment
 sip_env() {
@@ -29,7 +27,7 @@ sip_env() {
 sip_wait() {
   local i err
   for i in {1..30}; do
-    err=$(lk --silent sip inbound list --json 2>&1 >/dev/null) && return
+    err=$(lk --silent sip outbound list --json 2>&1 >/dev/null) && return
     [[ $i -eq 30 ]] && { echo "[sip] LiveKit API not answering at $LIVEKIT_URL: $err" >&2; return 1; }
     sleep 2
   done
@@ -75,43 +73,22 @@ sip_converge_trunk() {
   echo "$trunk_id"
 }
 
-# Converge the live LiveKit SIP config with deploy/sip/
+# Converge the live LiveKit SIP config with deploy/sip/, deleting every dispatch rule and inbound trunk so no call is answered
 sip_converge() {
   sip_env
   sip_wait
-
-  # Converge both trunks, keeping only the inbound ID for the rule below
-  local trunk_id
-  trunk_id=$(sip_converge_trunk inbound "$INBOUND_TRUNK_JSON")
   sip_converge_trunk outbound "$OUTBOUND_TRUNK_JSON" >/dev/null
-
-  # The rule converges the same way, always pinned to the inbound trunk found above rather than an ID baked into the file
-  local rule_name rule_id rule_ids
-  rule_name=$(jq -r .name "$RULE_JSON")
-  rule_id=$(lk --silent sip dispatch list --json | jq -r --arg n "$rule_name" \
-    '.items // [] | map(select(.name == $n)) | .[0].sipDispatchRuleId // empty')
-  # Renamed rules get the same lone-adoption treatment as the trunks
-  if [[ -z "$rule_id" ]]; then
-    rule_ids=$(lk --silent sip dispatch list --json | jq -r '.items // [] | .[].sipDispatchRuleId')
-    if [[ -n "$rule_ids" && $(echo "$rule_ids" | wc -l) -gt 1 ]]; then
-      echo "[sip] several dispatch rules exist and none is named $rule_name; delete the strays, then redeploy" >&2
-      return 1
-    fi
-    rule_id=$rule_ids
-    if [[ -n "$rule_id" ]]; then
-      echo "[sip] adopting lone dispatch rule $rule_id under its new name" >&2
-    fi
-  fi
-  if [[ -z "$rule_id" ]]; then
-    jq --arg tid "$trunk_id" '.trunk_ids = [$tid]' "$RULE_JSON" \
-      | lk --silent sip dispatch create - >/dev/null
-    echo "[sip] created rule '$rule_name'"
-  else
-    jq --arg id "$rule_id" --arg tid "$trunk_id" \
-      '{sip_dispatch_rule_id: $id, name: .name, trunk_ids: [$tid], rule: .rule, attributes: .attributes}' "$RULE_JSON" \
-      | lk --silent sip dispatch update - >/dev/null
-    echo "[sip] updated rule $rule_id"
-  fi
+  local rules trunks id
+  rules=$(lk --silent sip dispatch list --json | jq -r '.items // [] | .[].sipDispatchRuleId')
+  for id in $rules; do
+    lk --silent sip dispatch delete "$id" >/dev/null
+    echo "[sip] deleted dispatch rule $id"
+  done
+  trunks=$(sip_list_trunks inbound)
+  for id in $trunks; do
+    lk --silent sip inbound delete "$id" >/dev/null
+    echo "[sip] deleted inbound trunk $id"
+  done
 }
 
 # Print a UTC-timestamped "started" line
@@ -133,7 +110,7 @@ docker compose up -d
 # Converge the live LiveKit SIP config with the desired-state data
 sip_converge
 
-# Keep the SIP firewall in lockstep with the trunk's allowed ranges
+# Restrict SIP signaling to Twilio
 ./deploy/host/firewall.sh
 
 # Converge the host Caddy config with deploy/host/

@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 
-# Restrict SIP signaling (5060 udp+tcp) to the trunk's allowed_addresses; drops everyone else in-kernel.
+# Restrict SIP signaling (5060 udp+tcp) to Twilio's signaling ranges; drops everyone else in-kernel.
 # Idempotent; run by ringback-firewall.service at boot and by deploy.sh on every deploy.
 
 set -euo pipefail
 
-# Run from the repo root so the trunk JSON resolves
-cd "$(dirname "$0")/../.."
-
 CHAIN=SIP-GUARD
 
-ranges=$(jq -r '.trunk.allowed_addresses[]?' deploy/sip/inbound-trunk.json)
-[[ -n "$ranges" ]] || { echo "[fw] no allowed_addresses in trunk JSON; refusing to lock out SIP" >&2; exit 1; }
+# Twilio's Elastic SIP Trunking signaling ranges, the only peers in the calls we place
+TWILIO_RANGES=(
+  54.172.60.0/30
+  54.244.51.0/30
+  54.171.127.192/30
+  35.156.191.128/30
+  54.65.63.192/30
+  54.169.127.128/30
+  54.252.254.64/30
+  177.71.206.192/30
+)
 
 iptables -N "$CHAIN" 2>/dev/null || true
 iptables -F "$CHAIN"
-while read -r cidr; do
+for cidr in "${TWILIO_RANGES[@]}"; do
   iptables -A "$CHAIN" -s "$cidr" -j ACCEPT
-done <<< "$ranges"
+done
 iptables -A "$CHAIN" -j DROP
 
 # Route 5060 through the chain, once per protocol
