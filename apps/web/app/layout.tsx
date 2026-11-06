@@ -33,13 +33,16 @@ export default function RootLayout({
       data-scroll-behavior="smooth"
       suppressHydrationWarning
       className={cn(
-        "antialiased motion-safe:has-[[data-website]]:scroll-smooth",
+        "bg-background antialiased motion-safe:has-[[data-website]]:scroll-smooth",
+        // Extend the page's background into overscroll and Safari's edge fades.
+        "has-[[data-website]]:bg-paper has-[[data-website]]:scheme-light-dark!",
+        "has-[[data-call-dashboard]]:bg-[#fcfcfc] [&.dark:has([data-call-dashboard])]:bg-[#141414]",
         fontMono.variable,
         "font-sans",
         inter.variable
       )}
     >
-      <body>{children}</body>
+      <body className="bg-inherit">{children}</body>
     </html>
   )
 }
