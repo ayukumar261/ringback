@@ -133,8 +133,7 @@ const fakeMongo = () => ({
 });
 const harness = (
   mongo:
-    | Pick<MongoClient, "requests">
-    | ReturnType<typeof fakeMongo> = fakeMongo(),
+    Pick<MongoClient, "requests"> | ReturnType<typeof fakeMongo> = fakeMongo(),
 ) => {
   let session = sessionFixture();
   const retrieveSession = vi.fn<
@@ -199,45 +198,50 @@ const harness = (
 };
 
 describe("Stripe webhook HTTP", () => {
-  it("queues a completed free checkout using authoritative Stripe state", async () => {
-    const session = sessionFixture({
-      payment_status: "no_payment_required",
-      amount_total: 0,
-      payment_intent: null,
-    });
-    const mongo = {
-      requests: {
-        findOne: vi.fn(async () => requestFixture()),
-        updateOne: vi.fn(async () => ({})),
-      },
-      purchases: {
-        findOneAndUpdate: vi.fn(async (_filter, update) => update.$setOnInsert),
-      },
-    };
-    const h = harness(mongo as unknown as Pick<MongoClient, "requests">);
-    h.retrieveSession.mockResolvedValue({ accountId: "acct_test", session });
-    await h.run(handleStripeEvent(event(session)));
-    expect(mongo.purchases.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        $setOnInsert: expect.objectContaining({
-          amountSubtotal: 50,
-          amountTotal: 0,
-          paymentIntentId: null,
+  it.each(["paid", "no_payment_required"] as const)(
+    "queues a completed free %s checkout using authoritative Stripe state",
+    async (payment_status) => {
+      const session = sessionFixture({
+        payment_status,
+        amount_total: 0,
+        payment_intent: null,
+      });
+      const mongo = {
+        requests: {
+          findOne: vi.fn(async () => requestFixture()),
+          updateOne: vi.fn(async () => ({})),
+        },
+        purchases: {
+          findOneAndUpdate: vi.fn(
+            async (_filter, update) => update.$setOnInsert,
+          ),
+        },
+      };
+      const h = harness(mongo as unknown as Pick<MongoClient, "requests">);
+      h.retrieveSession.mockResolvedValue({ accountId: "acct_test", session });
+      await h.run(handleStripeEvent(event(session)));
+      expect(mongo.purchases.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          $setOnInsert: expect.objectContaining({
+            amountSubtotal: 50,
+            amountTotal: 0,
+            paymentIntentId: null,
+          }),
+        },
+        expect.anything(),
+      );
+      expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: "paid",
+            purchaseId: "acct_test:test:cs_test",
+          }),
         }),
-      },
-      expect.anything(),
-    );
-    expect(mongo.requests.updateOne).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          status: "paid",
-          purchaseId: "acct_test:test:cs_test",
-        }),
-      }),
-    );
-  });
+      );
+    },
+  );
   it("verifies the exact bytes before processing a signed event", async () => {
     const mongo = fakeMongo();
     const h = harness(mongo);

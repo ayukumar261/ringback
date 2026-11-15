@@ -1191,6 +1191,7 @@ describe("purchases", () => {
       { status: "open" },
       { status: "expired" },
       { payment_status: "unpaid" },
+      { payment_status: "unpaid", amount_total: 0, payment_intent: null },
       { payment_status: "no_payment_required" },
       { mode: "subscription" },
     ] as const)("refuses unpaid sessions %j", async (change) => {
@@ -1228,51 +1229,57 @@ describe("purchases", () => {
       ).rejects.toThrow("invalid_request");
       expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
     });
-    it("records a fully discounted checkout without a payment intent", async () => {
-      const mongo = fakeMongo();
-      mongo.purchases.findOneAndUpdate.mockImplementation(
-        async (_filter, update) => update.$setOnInsert,
-      );
-      const purchase = await Effect.runPromise(
-        recordPaidCheckout(
-          mongo.purchases as unknown as Collection<PurchaseDoc>,
-          {
-            accountId: "acct_test",
-            session: sessionFixture({
-              payment_status: "no_payment_required",
-              amount_total: 0,
-              payment_intent: null,
-            }),
-          },
-          policies,
-        ),
-      );
-      expect(purchase).toMatchObject({
-        amountSubtotal: 50,
-        amountTotal: 0,
-        paymentIntentId: null,
-        ...policies,
-      });
-    });
-    it("still requires Terms acceptance for free checkout", async () => {
-      await expect(
-        Effect.runPromise(
+    it.each(["paid", "no_payment_required"] as const)(
+      "records a fully discounted %s checkout without a payment intent",
+      async (payment_status) => {
+        const mongo = fakeMongo();
+        mongo.purchases.findOneAndUpdate.mockImplementation(
+          async (_filter, update) => update.$setOnInsert,
+        );
+        const purchase = await Effect.runPromise(
           recordPaidCheckout(
-            fakeMongo().purchases as unknown as Collection<PurchaseDoc>,
+            mongo.purchases as unknown as Collection<PurchaseDoc>,
             {
               accountId: "acct_test",
               session: sessionFixture({
-                payment_status: "no_payment_required",
+                payment_status,
                 amount_total: 0,
                 payment_intent: null,
-                consent: null,
               }),
             },
             policies,
           ),
-        ),
-      ).rejects.toThrow("invalid_request");
-    });
+        );
+        expect(purchase).toMatchObject({
+          amountSubtotal: 50,
+          amountTotal: 0,
+          paymentIntentId: null,
+          ...policies,
+        });
+      },
+    );
+    it.each(["paid", "no_payment_required"] as const)(
+      "still requires Terms acceptance for free %s checkout",
+      async (payment_status) => {
+        await expect(
+          Effect.runPromise(
+            recordPaidCheckout(
+              fakeMongo().purchases as unknown as Collection<PurchaseDoc>,
+              {
+                accountId: "acct_test",
+                session: sessionFixture({
+                  payment_status,
+                  amount_total: 0,
+                  payment_intent: null,
+                  consent: null,
+                }),
+              },
+              policies,
+            ),
+          ),
+        ).rejects.toThrow("invalid_request");
+      },
+    );
     it.each(["privacy_version", "privacy_url"] as const)(
       "rejects Checkout metadata with a different %s",
       async (field) => {
@@ -1291,7 +1298,7 @@ describe("purchases", () => {
         expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
       },
     );
-    it.each([0, -1, 1.5, 51, Number.MAX_SAFE_INTEGER + 1])(
+    it.each([-1, 1.5, 51, Number.MAX_SAFE_INTEGER + 1])(
       "rejects invalid amounts: %s",
       async (amount_total) => {
         await expect(

@@ -375,11 +375,11 @@ export const recordPaidCheckout = (
       !session.id ||
       !session.client_reference_id ||
       !customerId ||
-      (!intentId && session.payment_status !== "no_payment_required") ||
+      // Managed Payments can report a fully discounted session as "paid".
+      (!intentId && session.amount_total !== 0) ||
       !Number.isSafeInteger(session.amount_total) ||
       session.amount_total === null ||
       session.amount_total < 0 ||
-      (session.payment_status === "paid" && session.amount_total === 0) ||
       !Number.isSafeInteger(session.amount_subtotal) ||
       session.amount_subtotal === null ||
       session.amount_subtotal <= 0 ||
