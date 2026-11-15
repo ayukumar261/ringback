@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import { Redis } from "ioredis";
 import { MongoClient as Driver } from "mongodb";
@@ -18,6 +18,7 @@ import {
   type PurchaseDoc,
   type RequestDoc,
 } from "../clients/mongo.js";
+import { RedisClient } from "../clients/redis.js";
 import { LiveKitClient } from "../clients/livekit.js";
 import { StripeClient } from "../clients/stripe.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
@@ -25,12 +26,13 @@ import { createCallRequest } from "../handlers/payments/http.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
 import { dispatchCall } from "../pipeline/dispatch.js";
 import { handleStripeEvent } from "../webhooks/stripe.js";
-import { CallLimit, makeCallLimit } from "./limit.js";
+import { CallLimit, makeCallLimit, makeFreeCallLimit } from "./limit.js";
 import { Preflight, makePreflight } from "./preflight.js";
 
 const mongoUri = process.env.MONGODB_URI;
 const redisUrl = process.env.REDIS_URL;
 const DAY = 86_400_000;
+const email = "payer@example.com";
 const number = "+14155552671";
 const otherNumber = "+14155552672";
 const settings = PaymentConfig.make({
@@ -50,8 +52,9 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
     requests: db.collection<RequestDoc>("requests"),
     purchases: db.collection<PurchaseDoc>("purchases"),
   };
+  const redisPrefix = `test:${randomUUID()}:`;
   const redis = new Redis(redisUrl ?? "redis://localhost:6379", {
-    keyPrefix: `test:${randomUUID()}:`,
+    keyPrefix: redisPrefix,
     lazyConnect: true,
     maxRetriesPerRequest: 1,
   });
@@ -79,6 +82,7 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
       A,
       E,
       | MongoClient
+      | RedisClient
       | LiveKitClient
       | PaymentConfig
       | Preflight
@@ -89,6 +93,7 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
     Effect.runPromise(
       effect.pipe(
         Effect.provideService(MongoClient, mongo as MongoClient),
+        Effect.provideService(RedisClient, redis as unknown as RedisClient),
         Effect.provideService(
           LiveKitClient,
           LiveKitClient.make({ ready: Effect.void, dial }),
@@ -102,14 +107,11 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
         Effect.provideService(StripeClient, stripe),
       ),
     );
-  const clearRedis = () =>
-    redis.del(
-      ...["production", "development"].flatMap((environment) =>
-        ["revision", number, otherNumber].map(
-          (suffix) => `call-limit:${environment}:${suffix}`,
-        ),
-      ),
-    );
+  const clearRedis = async () => {
+    const keys = await redis.keys(`${redisPrefix}*`);
+    if (keys.length)
+      await redis.del(...keys.map((key) => key.slice(redisPrefix.length)));
+  };
 
   beforeAll(async () => {
     await Promise.all([driver.connect(), redis.connect()]);
@@ -173,7 +175,13 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
       livemode: true,
       checkoutSessionId: record.checkout!.id,
       paymentIntentId: total === 0 ? null : `pi_${id}`,
-      customer: { stripeId: "cus_test", name: null, email: null, phone: null },
+      // Use distinct payers to isolate the destination limit from the free-call limit.
+      customer: {
+        stripeId: "cus_test",
+        name: null,
+        email: `${id}@example.com`,
+        phone: null,
+      },
       amountSubtotal: 50,
       amountTotal: total,
       currency: "usd",
@@ -360,5 +368,204 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
     expect(await run(limit.check(number).pipe(Effect.flip))).toMatchObject({
       code: "call_limit_unavailable",
     });
+  });
+});
+
+describe("free-call quota failures", () => {
+  it("fails closed when Redis rejects the reservation", async () => {
+    const limit = makeFreeCallLimit(
+      {
+        eval: vi.fn(async () => {
+          throw new Error("Redis unavailable");
+        }),
+      },
+      "production",
+    );
+    expect(
+      await Effect.runPromise(Effect.flip(limit.reserve(email, "request"))),
+    ).toMatchObject({ code: "free_call_limit_unavailable" });
+  });
+  it("bounds a Redis command that never responds", async () => {
+    vi.useFakeTimers();
+    try {
+      const limit = makeFreeCallLimit(
+        { eval: vi.fn(() => new Promise(() => {})) },
+        "production",
+      );
+      const pending = Effect.runPromise(
+        Effect.flip(limit.reserve(email, "request")),
+      );
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(await pending).toMatchObject({
+        code: "free_call_limit_unavailable",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe.skipIf(!redisUrl)("Redis free-call quota", () => {
+  const prefix = `test:${randomUUID()}:`;
+  const redis = new Redis(redisUrl ?? "redis://127.0.0.1:6379", {
+    keyPrefix: prefix,
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+  });
+  const limit = makeFreeCallLimit(redis, "production");
+  const run = Effect.runPromise;
+  const clear = async () => {
+    const keys = await redis.keys(`${prefix}*`);
+    if (keys.length)
+      await redis.del(...keys.map((key) => key.slice(prefix.length)));
+  };
+  const keys = (identity = email, environment = "production") => {
+    const digest = createHash("sha256").update(identity).digest("hex");
+    const base = `free-call-limit:${environment}:{${digest}}`;
+    return { pending: `${base}:pending`, dialed: `${base}:dialed` };
+  };
+  const now = async () => {
+    const [seconds, microseconds] = await redis.time();
+    return Number(seconds) * 1000 + Math.floor(Number(microseconds) / 1000);
+  };
+  beforeAll(async () => {
+    await redis.connect();
+  });
+  beforeEach(clear);
+  afterAll(async () => {
+    try {
+      await clear();
+    } finally {
+      await redis.quit();
+    }
+  });
+
+  it("allows 3 free calls and refuses the fourth", async () => {
+    for (let index = 0; index < 3; index++) {
+      await run(limit.reserve(email, `request-${index}`));
+      await run(limit.complete(email, `request-${index}`));
+    }
+    await expect(run(limit.reserve(email, "fourth"))).rejects.toThrow(
+      "daily_free_call_limit",
+    );
+    expect(await redis.zcard(keys().dialed)).toBe(3);
+  });
+
+  it("atomically admits only 3 concurrent reservations", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        run(Effect.either(limit.reserve(email, `request-${index}`))),
+      ),
+    );
+    expect(results.filter((result) => result._tag === "Right")).toHaveLength(3);
+    expect(results.filter((result) => result._tag === "Left")).toHaveLength(17);
+    expect(await redis.zcard(keys().pending)).toBe(3);
+  });
+
+  it("does not consume extra slots or extend timestamps when repeated", async () => {
+    await run(limit.reserve(email, "first"));
+    const reservedAt = await redis.zscore(keys().pending, "first");
+    await run(limit.reserve(email, "first"));
+    expect(await redis.zscore(keys().pending, "first")).toBe(reservedAt);
+    await run(limit.complete(email, "first"));
+    const completedAt = await redis.zscore(keys().dialed, "first");
+    await run(limit.reserve(email, "first"));
+    await run(limit.complete(email, "first"));
+    expect(await redis.zscore(keys().dialed, "first")).toBe(completedAt);
+    await run(limit.reserve(email, "second"));
+    await run(limit.reserve(email, "third"));
+    await expect(run(limit.reserve(email, "fourth"))).rejects.toThrow(
+      "daily_free_call_limit",
+    );
+  });
+
+  it("uses a rolling 24-hour window, expiring boundary entries while retaining recent calls", async () => {
+    const timestamp = await now();
+    await redis.zadd(
+      keys().dialed,
+      timestamp - DAY,
+      "boundary",
+      timestamp - DAY - 1,
+      "older",
+      timestamp - 60_000,
+      "recent-1",
+      timestamp - 120_000,
+      "recent-2",
+    );
+    await redis.pexpire(keys().dialed, DAY);
+    await run(limit.reserve(email, "third"));
+    expect(await redis.zrange(keys().dialed, 0, -1)).toEqual([
+      "recent-2",
+      "recent-1",
+    ]);
+    await expect(run(limit.reserve(email, "fourth"))).rejects.toThrow(
+      "daily_free_call_limit",
+    );
+  });
+
+  it("expires pending keys after 2 minutes and completed keys after 24 hours", async () => {
+    await run(limit.reserve(email, "request"));
+    expect(await redis.pttl(keys().pending)).toBeGreaterThan(115_000);
+    expect(await redis.pttl(keys().pending)).toBeLessThanOrEqual(120_000);
+    await run(limit.complete(email, "request"));
+    expect(await redis.exists(keys().pending)).toBe(0);
+    expect(await redis.pttl(keys().dialed)).toBeGreaterThan(DAY - 5000);
+    expect(await redis.pttl(keys().dialed)).toBeLessThanOrEqual(DAY);
+    expect(
+      (await redis.keys(`${prefix}*`)).every((key) => !key.includes(email)),
+    ).toBe(true);
+  });
+
+  it("releases abandoned reservations after the dispatch claim expires", async () => {
+    const timestamp = await now();
+    await redis.zadd(
+      keys().pending,
+      timestamp - 120_000,
+      "stale-1",
+      timestamp - 120_001,
+      "stale-2",
+      timestamp - 120_002,
+      "stale-3",
+    );
+    await redis.pexpire(keys().pending, 120_000);
+    await run(limit.reserve(email, "fresh"));
+    expect(await redis.zrange(keys().pending, 0, -1)).toEqual(["fresh"]);
+  });
+
+  it("keeps different identities and environments separate", async () => {
+    const development = makeFreeCallLimit(redis, "development");
+    for (let index = 0; index < 3; index++) {
+      await run(limit.reserve(email, `prod-${index}`));
+      await run(limit.reserve("other@example.com", `other-${index}`));
+      await run(development.reserve(email, `dev-${index}`));
+    }
+    await expect(run(limit.reserve(email, "fourth"))).rejects.toThrow(
+      "daily_free_call_limit",
+    );
+    await expect(
+      run(limit.reserve("other@example.com", "fourth")),
+    ).rejects.toThrow("daily_free_call_limit");
+    await expect(run(development.reserve(email, "fourth"))).rejects.toThrow(
+      "daily_free_call_limit",
+    );
+  });
+
+  it("releases failed requests idempotently and removes empty keys", async () => {
+    await run(limit.reserve(email, "completed"));
+    await run(limit.complete(email, "completed"));
+    await run(limit.reserve(email, "pending"));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await run(limit.release(email, "completed"));
+      await run(limit.release(email, "pending"));
+    }
+    expect(await redis.keys(`${prefix}*`)).toEqual([]);
+    await run(limit.reserve(email, "next"));
+  });
+
+  it("requires a reservation before recording a completed call", async () => {
+    await expect(run(limit.complete(email, "unreserved"))).rejects.toThrow(
+      "free_call_limit_unavailable",
+    );
+    expect(await redis.keys(`${prefix}*`)).toEqual([]);
   });
 });

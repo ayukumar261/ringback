@@ -249,6 +249,34 @@ describe("Stripe webhook HTTP", () => {
       );
     },
   );
+  it.each([0, 25, 50])(
+    "does not add quota metadata to a %s-cent request",
+    async (amountTotal) => {
+      const session = sessionFixture({ amount_total: amountTotal });
+      const mongo = {
+        requests: {
+          findOne: vi.fn(async () => requestFixture()),
+          updateOne: vi.fn(async () => ({})),
+        },
+        purchases: {
+          findOneAndUpdate: vi.fn(
+            async (_filter, update) => update.$setOnInsert,
+          ),
+        },
+      };
+      const h = harness(mongo as unknown as Pick<MongoClient, "requests">);
+      h.retrieveSession.mockResolvedValue({ accountId: "acct_test", session });
+      await h.run(handleStripeEvent(event(session)));
+      expect(mongo.requests.updateOne).toHaveBeenCalledWith(expect.anything(), {
+        $set: {
+          status: "paid",
+          purchaseId: "acct_test:test:cs_test",
+          paidAt: expect.any(Date),
+        },
+        $unset: { error: "" },
+      });
+    },
+  );
   it("verifies the exact bytes before processing a signed event", async () => {
     const mongo = fakeMongo();
     const h = harness(mongo);

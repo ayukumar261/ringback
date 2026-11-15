@@ -1,15 +1,19 @@
 import { Effect, Layer, Schedule } from "effect";
 import { MongoClient } from "../clients/mongo.js";
+import { RedisClient } from "../clients/redis.js";
 import { LiveKitClient, LiveKitError } from "../clients/livekit.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   PaymentError,
   logPaymentFailure,
 } from "../handlers/payments/errors.js";
-import { requestSnapshotHash } from "../handlers/payments/schema.js";
+import {
+  normalizeCheckoutEmail,
+  requestSnapshotHash,
+} from "../handlers/payments/schema.js";
 import { Preflight } from "../preflight/preflight.js";
-import { PreflightError } from "../preflight/errors.js";
-import { CallLimit } from "../preflight/limit.js";
+import { FreeCallLimitError, PreflightError } from "../preflight/errors.js";
+import { CallLimit, makeFreeCallLimit } from "../preflight/limit.js";
 
 // dispatchCall claims the oldest paid call and dials it once, since a failed dial may have gone through.
 export const dispatchCall = Effect.gen(function* () {
@@ -42,8 +46,11 @@ export const dispatchCall = Effect.gen(function* () {
     ),
   );
   if (!record) return false;
+  let releaseFreeCall: Effect.Effect<void> = Effect.void;
+  let completeFreeCall: Effect.Effect<void, FreeCallLimitError> = Effect.void;
   const recordError = (code: string) =>
     Effect.gen(function* () {
+      yield* releaseFreeCall;
       yield* logPaymentFailure("dispatch", code);
       yield* Effect.tryPromise(() =>
         mongo.requests.updateOne(
@@ -76,6 +83,19 @@ export const dispatchCall = Effect.gen(function* () {
       requestSnapshotHash(record) !== record.requestSnapshotHash
     )
       return yield* new PaymentError({ code: "conflict" });
+    // Only fully discounted purchases use the email quota: a charged call must
+    // never be refused by this check after payment.
+    if (purchase.amountTotal === 0) {
+      const email = normalizeCheckoutEmail(purchase.customer.email);
+      if (!email) return yield* recordError("free_call_unavailable");
+      const redis = yield* RedisClient;
+      const freeLimit = makeFreeCallLimit(redis, environment);
+      releaseFreeCall = freeLimit
+        .release(email, record._id)
+        .pipe(Effect.ignore);
+      completeFreeCall = freeLimit.complete(email, record._id);
+      yield* freeLimit.reserve(email, record._id);
+    }
     // The shared Lookup cache refreshes expired results before any dial attempt.
     const preflight = yield* Preflight;
     // Rebuild from the paid queue even if a webhook stopped after its Mongo write.
@@ -90,6 +110,7 @@ export const dispatchCall = Effect.gen(function* () {
         onTimeout: () => new LiveKitError({ code: "unavailable" }),
       }),
     );
+    yield* completeFreeCall;
     yield* Effect.tryPromise(() =>
       mongo.requests.updateOne(
         { _id: record._id, status: "dialing" },
@@ -101,6 +122,7 @@ export const dispatchCall = Effect.gen(function* () {
       recordError(
         e instanceof PaymentError ||
           e instanceof LiveKitError ||
+          e instanceof FreeCallLimitError ||
           e instanceof PreflightError
           ? e.code
           : "internal",

@@ -1,6 +1,10 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { checkCallInput, requestSnapshotHash } from "./schema.js";
+import {
+  checkCallInput,
+  normalizeCheckoutEmail,
+  requestSnapshotHash,
+} from "./schema.js";
 
 const input = {
   to: "+15551234567",
@@ -62,6 +66,38 @@ describe("call input", () => {
       ).prompt,
     ).toHaveLength(16000);
   });
+});
+
+describe("Checkout email normalization", () => {
+  it.each([
+    ["  Payer@EXAMPLE.COM  ", "payer@example.com"],
+    ["payer+free@example.com", "payer@example.com"],
+    ["payer+one+two@example.com", "payer@example.com"],
+    ["first.last+free@example.com", "first.last@example.com"],
+    ["First.Last+Free@GMAIL.COM", "firstlast@gmail.com"],
+    ["  First.Last+Free@GOOGLEMAIL.COM  ", "firstlast@gmail.com"],
+    ["first.last@gmail.example.com", "first.last@gmail.example.com"],
+    ["other@gmail.com", "other@gmail.com"],
+  ])("normalizes %s to %s", (email, expected) => {
+    expect(normalizeCheckoutEmail(email)).toBe(expected);
+  });
+  it.each([
+    null,
+    undefined,
+    "",
+    "  ",
+    "no-email",
+    "@example.com",
+    "+tag@example.com",
+    "...@gmail.com",
+    "a@b@example.com",
+    "a b@example.com",
+  ])(
+    "does not use missing or malformed email %j as a quota identity",
+    (email) => {
+      expect(normalizeCheckoutEmail(email)).toBeNull();
+    },
+  );
 });
 
 describe("request snapshot", () => {

@@ -21,6 +21,14 @@ export class PreflightError extends Data.TaggedError("PreflightError")<{
   }
 }
 
+export class FreeCallLimitError extends Data.TaggedError("FreeCallLimitError")<{
+  code: "daily_free_call_limit" | "free_call_limit_unavailable";
+}> {
+  override get message() {
+    return this.code;
+  }
+}
+
 export const preflightStatus = (error: PreflightError): 422 | 429 | 503 =>
   error.code === "daily_call_limit"
     ? 429

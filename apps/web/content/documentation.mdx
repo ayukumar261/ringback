@@ -158,6 +158,8 @@ A call can also end early:
 
 A call can also fail before dialing with `error: "daily_call_limit"` if the destination has reached its limit, or `error: "call_limit_unavailable"` if the limit couldn’t be checked. These calls aren’t dialed or automatically retried.
 
+Free calls are limited to 3 in 24 hours. Calls over this limit fail before dialing with `error: "daily_free_call_limit"`. The free redemption is still used, and the call isn’t automatically retried. Paid calls are exempt from this free-call limit.
+
 After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
 
 ## Get the transcript

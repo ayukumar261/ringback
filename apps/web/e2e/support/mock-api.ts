@@ -24,6 +24,7 @@ export interface MockApi {
   handoffUsed: Set<string>
   legacyCheckout: boolean
   checkoutExpiresAt?: string
+  error?: string | null
   turns?: Turn[]
   requests: { url: string; cookie: string; range?: string }[]
 }
@@ -139,6 +140,7 @@ export async function mockApi(context: BrowserContext): Promise<MockApi> {
     return reply({
       call_id: id,
       status: dialed ? "dialed" : stage,
+      error: state.error ?? null,
       dashboard_url: `${web.url}/call/${id}#token=${secret}`,
       to: "+15551234567",
       prompt: `Private task for ${id}`,

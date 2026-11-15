@@ -608,6 +608,47 @@ test("the theme menu persists preferences and follows the system and shortcut", 
   )
 })
 
+for (const [error, heading, description] of [
+  [
+    "daily_free_call_limit",
+    "Free call limit reached",
+    "You’ve reached the limit of 3 free calls in 24 hours.",
+  ],
+  [
+    "free_call_unavailable",
+    "This free call couldn’t be started",
+    "We couldn’t process this free call.",
+  ],
+  [
+    "free_call_limit_unavailable",
+    "The free call limit couldn’t be checked",
+    "This call won’t be retried automatically",
+  ],
+] as const) {
+  test(`explains ${error} without offering payment or a refund`, async ({
+    page,
+    api,
+  }) => {
+    api.stage = "failed"
+    api.error = error
+    await page.goto(`/call/a#token=${tokens.a}`)
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible()
+    await expect(page.getByText(description, { exact: false })).toBeVisible()
+    await expect(
+      page.getByText("no payment was charged", { exact: false })
+    ).toBeVisible()
+    await expect(
+      page.getByText("redemption has been used", { exact: false })
+    ).toBeVisible()
+    await expect(
+      page.getByRole("link", { name: "Continue to payment" })
+    ).toHaveCount(0)
+    await expect(page.locator("[data-call-dashboard]")).not.toContainText(
+      /email|stripe|gmail|googlemail|normaliz|\+tag/i
+    )
+  })
+}
+
 for (const [stage, heading] of [
   ["dialing", "Waiting for an answer"],
   ["failed", "The call couldn’t be placed"],

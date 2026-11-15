@@ -12,6 +12,19 @@ export const PRIVACY_VERSION = "2026-10-30";
 // MAX_DURATION caps every call at 30 minutes.
 export const MAX_DURATION = 30 * 60;
 
+// normalizeCheckoutEmail groups aliases for the free-call limit, keeping dots on non-Gmail domains.
+export const normalizeCheckoutEmail = (email: string | null | undefined) => {
+  const match = /^([^@\s]+)@([^@\s]+)$/.exec(email?.trim().toLowerCase() ?? "");
+  if (!match) return null;
+  let local = match[1]!.split("+", 1)[0]!;
+  let domain = match[2]!;
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.replaceAll(".", "");
+    domain = "gmail.com";
+  }
+  return local ? `${local}@${domain}` : null;
+};
+
 // Stripe's expiry webhook can arrive after the payment link has already expired.
 export const callRequestStatus = (
   request: Pick<RequestDoc, "status" | "expiresAt">,

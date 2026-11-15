@@ -195,6 +195,25 @@ const emptyStates = {
   },
 }
 
+const freeCallFailures: Record<string, { title: string; description: string }> =
+  {
+    daily_free_call_limit: {
+      title: "Free call limit reached",
+      description:
+        "You’ve reached the limit of 3 free calls in 24 hours. Try again later. No call was placed and no payment was charged. This free redemption has been used.",
+    },
+    free_call_unavailable: {
+      title: "This free call couldn’t be started",
+      description:
+        "We couldn’t process this free call. No call was placed and no payment was charged. This free redemption has been used.",
+    },
+    free_call_limit_unavailable: {
+      title: "The free call limit couldn’t be checked",
+      description:
+        "No call was placed and no payment was charged. This call won’t be retried automatically, and this free redemption has been used.",
+    },
+  }
+
 function callState(data: Call, expired: boolean): CallState {
   if (data.call?.status === "ended") return "ended"
   if (data.call?.status === "active") return "active"
@@ -280,7 +299,10 @@ function CallContent({
     )
 
   const state = callState(data, checkoutExpired)
-  const waiting = emptyStates[state]
+  const waiting = {
+    ...emptyStates[state],
+    ...(state === "failed" && data.error && freeCallFailures[data.error]),
+  }
   const EmptyIcon = waiting.icon
   const live = state === "active"
   const finished = ["ended", "expired", "failed"].includes(state)

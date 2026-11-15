@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { MongoClient as Driver } from "mongodb";
+import { Redis } from "ioredis";
+import { RedisClient } from "../clients/redis.js";
 import type Stripe from "stripe";
 import {
   MongoClient,
@@ -55,6 +57,7 @@ const settings = {
 };
 type Settings = Omit<PaymentConfig, "_tag">;
 const mongoUri = process.env.MONGODB_URI;
+const redisUrl = process.env.REDIS_URL;
 const requestFixture = (changes: Partial<RequestDoc> = {}): RequestDoc => {
   const record = {
     _id: "request-test",
@@ -127,7 +130,12 @@ const purchaseFixture = (changes: Partial<PurchaseDoc> = {}): PurchaseDoc => ({
   livemode: true,
   checkoutSessionId: "cs_test",
   paymentIntentId: "pi_test",
-  customer: { stripeId: "cus_test", name: null, email: null, phone: null },
+  customer: {
+    stripeId: "cus_test",
+    name: null,
+    email: "payer@example.com",
+    phone: null,
+  },
   amountTotal: 50,
   currency: "usd",
   recordedAt: new Date(),
@@ -166,10 +174,14 @@ const fakeMongo = () => ({
     ),
   },
 });
+const fakeRedis = () => ({
+  eval: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => 1),
+});
 const harness = (
   mongo:
     | Pick<MongoClient, "requests" | "purchases">
     | ReturnType<typeof fakeMongo> = fakeMongo(),
+  redis: Pick<Redis, "eval"> = fakeRedis(),
 ) => {
   const ready = vi.fn(async () => {});
   const dial = vi.fn<(request: DialInput) => Promise<void>>(async () => {});
@@ -200,6 +212,7 @@ const harness = (
   ) =>
     effect.pipe(
       Effect.provideService(MongoClient, mongo as MongoClient),
+      Effect.provideService(RedisClient, redis as RedisClient),
       Effect.provideService(LiveKitClient, dialer),
       Effect.provideService(Preflight, Preflight.make({ check })),
       Effect.provideService(
@@ -220,7 +233,12 @@ const harness = (
       effect: Effect.Effect<
         A,
         E,
-        MongoClient | LiveKitClient | PaymentConfig | Preflight | CallLimit
+        | MongoClient
+        | RedisClient
+        | LiveKitClient
+        | PaymentConfig
+        | Preflight
+        | CallLimit
       >,
       overrides: Partial<Settings> = {},
     ) => Effect.runPromise(provide(effect, overrides)),
@@ -273,6 +291,137 @@ describe("paid dispatch", () => {
     await h.run(dispatchCall);
     expect(h.dial).not.toHaveBeenCalled();
   });
+  it("reserves and completes a free call in Redis", async () => {
+    const mongo = fakeMongo();
+    const redis = fakeRedis();
+    mongo.requests.findOneAndUpdate.mockResolvedValue(
+      requestFixture({
+        status: "dialing",
+        purchaseId: "acct_test:live:cs_test",
+      }),
+    );
+    mongo.purchases.findOne.mockResolvedValue(
+      purchaseFixture({
+        amountSubtotal: 50,
+        amountTotal: 0,
+        paymentIntentId: null,
+      }),
+    );
+    const h = harness(mongo, redis);
+    await h.run(dispatchCall);
+    expect(h.dial).toHaveBeenCalledTimes(1);
+    expect(redis.eval).toHaveBeenCalledTimes(2);
+    expect(mongo.requests.updateOne).toHaveBeenCalledExactlyOnceWith(
+      { _id: "request-test", status: "dialing" },
+      { $set: { status: "dialed", dialedAt: expect.any(Date) } },
+    );
+  });
+  it("refuses a free call before preflight or dialing when Redis denies a slot", async () => {
+    const mongo = fakeMongo();
+    const redis = fakeRedis();
+    mongo.requests.findOneAndUpdate.mockResolvedValue(
+      requestFixture({
+        status: "dialing",
+        purchaseId: "acct_test:live:cs_test",
+      }),
+    );
+    mongo.purchases.findOne.mockResolvedValue(
+      purchaseFixture({
+        amountSubtotal: 50,
+        amountTotal: 0,
+        paymentIntentId: null,
+      }),
+    );
+    redis.eval.mockResolvedValueOnce(0);
+    const h = harness(mongo, redis);
+    await h.run(dispatchCall);
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.dial).not.toHaveBeenCalled();
+    expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+      { _id: "request-test", status: "dialing" },
+      { $set: { status: "failed", error: "daily_free_call_limit" } },
+    );
+  });
+  it.each([25, 50])(
+    "bypasses the Redis quota for a %s-cent purchase even when Redis fails",
+    async (amountTotal) => {
+      const mongo = fakeMongo();
+      const redis = fakeRedis();
+      mongo.requests.findOneAndUpdate.mockResolvedValue(
+        requestFixture({
+          status: "dialing",
+          purchaseId: "acct_test:live:cs_test",
+        }),
+      );
+      mongo.purchases.findOne.mockResolvedValue(
+        purchaseFixture({ amountSubtotal: 50, amountTotal }),
+      );
+      redis.eval.mockRejectedValue(new Error("Redis unavailable"));
+      const h = harness(mongo, redis);
+      await h.run(dispatchCall);
+      expect(redis.eval).not.toHaveBeenCalled();
+      expect(h.dial).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("fails a free call if Redis cannot check the quota", async () => {
+    const mongo = fakeMongo();
+    const redis = fakeRedis();
+    mongo.requests.findOneAndUpdate.mockResolvedValue(
+      requestFixture({
+        status: "dialing",
+        purchaseId: "acct_test:live:cs_test",
+      }),
+    );
+    mongo.purchases.findOne.mockResolvedValue(
+      purchaseFixture({
+        amountSubtotal: 50,
+        amountTotal: 0,
+        paymentIntentId: null,
+      }),
+    );
+    redis.eval.mockRejectedValueOnce(new Error("Redis unavailable"));
+    const h = harness(mongo, redis);
+    await h.run(dispatchCall);
+    expect(h.dial).not.toHaveBeenCalled();
+    expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+      { _id: "request-test", status: "dialing" },
+      { $set: { status: "failed", error: "free_call_limit_unavailable" } },
+    );
+  });
+  it.each([0, 25, 50])(
+    "only requires a Checkout email for a free purchase (%s cents)",
+    async (amountTotal) => {
+      const mongo = fakeMongo();
+      mongo.requests.findOneAndUpdate.mockResolvedValue(
+        requestFixture({
+          status: "dialing",
+          purchaseId: "acct_test:live:cs_test",
+        }),
+      );
+      mongo.purchases.findOne.mockResolvedValue(
+        purchaseFixture({
+          amountSubtotal: 50,
+          amountTotal,
+          customer: {
+            stripeId: "cus_test",
+            name: null,
+            email: null,
+            phone: null,
+          },
+        }),
+      );
+      const redis = fakeRedis();
+      const h = harness(mongo, redis);
+      await h.run(dispatchCall);
+      expect(redis.eval).not.toHaveBeenCalled();
+      expect(h.dial).toHaveBeenCalledTimes(amountTotal === 0 ? 0 : 1);
+      if (amountTotal === 0)
+        expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+          { _id: "request-test", status: "dialing" },
+          { $set: { status: "failed", error: "free_call_unavailable" } },
+        );
+    },
+  );
   it.each([
     "unsupported_country",
     "unsupported_line_type",
@@ -399,17 +548,28 @@ describe("paid dispatch", () => {
   });
 });
 
-describe.skipIf(!mongoUri)("dispatch persistence", () => {
+describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
   const driver = new Driver(mongoUri ?? "mongodb://127.0.0.1:27017", {
     serverSelectionTimeoutMS: 3000,
   });
   const db = driver.db(`ringback_test_${randomUUID().replaceAll("-", "")}`);
+  const prefix = `test:${randomUUID()}:`;
+  const redis = new Redis(redisUrl ?? "redis://127.0.0.1:6379", {
+    keyPrefix: prefix,
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+  });
+  const clearQuota = async () => {
+    const keys = await redis.keys(`${prefix}*`);
+    if (keys.length)
+      await redis.del(...keys.map((key) => key.slice(prefix.length)));
+  };
   const mongo = {
     requests: db.collection<RequestDoc>("requests"),
     purchases: db.collection<PurchaseDoc>("purchases"),
   };
   beforeAll(async () => {
-    await driver.connect();
+    await Promise.all([driver.connect(), redis.connect()]);
     await Promise.all([
       createRequestIndexes(mongo.requests),
       createPurchaseIndexes(mongo.purchases),
@@ -419,17 +579,18 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
     await Promise.all(
       Object.values(mongo).map((collection) => collection.deleteMany({})),
     );
+    await clearQuota();
     vi.clearAllMocks();
   });
   afterAll(async () => {
     try {
-      await db.dropDatabase();
+      await Promise.all([db.dropDatabase(), clearQuota()]);
     } finally {
-      await driver.close();
+      await Promise.all([driver.close(), redis.quit()]);
     }
   });
   const h = {
-    ...harness(mongo),
+    ...harness(mongo, redis),
     mongo,
     // paid seeds a paid, queued request without calling the other handlers
     paid: async (overrides: Partial<Pick<RequestDoc, "environment">> = {}) => {
@@ -458,6 +619,158 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       return { result: { call_id: record._id }, session };
     },
   };
+  const receiveCheckout = (session: Stripe.Checkout.Session) =>
+    h.run(
+      handleStripeEvent(event(session)).pipe(
+        Effect.provideService(
+          StripeClient,
+          StripeClient.make({
+            retrieveSession: () =>
+              Effect.succeed({ accountId: "acct_test", session }),
+            createSession: () =>
+              Effect.dieMessage("Unexpected Checkout creation"),
+            verifyEvent: () =>
+              Effect.dieMessage("Unexpected signature verification"),
+          }),
+        ),
+      ),
+    );
+  const completedCheckout = async (
+    id: string,
+    email: string,
+    amountTotal = 0,
+  ) => {
+    const record = requestFixture({
+      _id: id,
+      room: `call_${id}`,
+      checkout: { ...requestFixture().checkout!, id: `cs_${id}` },
+    });
+    await mongo.requests.insertOne(record);
+    const session = sessionFixture({
+      id: record.checkout!.id,
+      client_reference_id: id,
+      amount_total: amountTotal,
+      payment_status: amountTotal === 0 ? "no_payment_required" : "paid",
+      payment_intent: amountTotal === 0 ? null : `pi_${id}`,
+      customer_details: { ...sessionFixture().customer_details!, email },
+      metadata: {
+        ...sessionFixture().metadata,
+        request_snapshot_hash: record.requestSnapshotHash,
+      },
+    });
+    await receiveCheckout(session);
+    return session;
+  };
+  it("allows 3 free calls across email aliases, refuses the fourth, and keeps its redemption consumed", async () => {
+    const emails = [
+      "First.Last@gmail.com",
+      "firstlast+two@gmail.com",
+      "  FIRST.LAST+three@GOOGLEMAIL.COM  ",
+      "first.last+four@gmail.com",
+    ];
+    for (const [index, email] of emails.entries()) {
+      const id = `free-${index}`;
+      const session = await completedCheckout(id, email);
+      expect(await mongo.requests.findOne({ _id: id })).not.toHaveProperty(
+        "freeCallEmail",
+      );
+      await h.run(dispatchCall);
+      expect(await h.run(readCallRequest(id, accessToken))).toMatchObject({
+        status: index < 3 ? "dialed" : "failed",
+        error: index < 3 ? null : "daily_free_call_limit",
+      });
+      if (index === 3) {
+        await receiveCheckout(session);
+        expect(await h.run(dispatchCall)).toBe(false);
+        expect((await mongo.requests.findOne({ _id: id }))?.error).toBe(
+          "daily_free_call_limit",
+        );
+      }
+    }
+    expect(h.dial).toHaveBeenCalledTimes(3);
+    expect(await mongo.purchases.countDocuments({ amountTotal: 0 })).toBe(4);
+  });
+  it.each([25, 50])(
+    "still dials a %s-cent purchase after the email has used all 3 free calls",
+    async (amountTotal) => {
+      for (let index = 0; index < 3; index++) {
+        await completedCheckout(`free-${index}`, "payer+free@example.com");
+        await h.run(dispatchCall);
+      }
+      await completedCheckout(
+        "paid-call",
+        "PAYER+paid@example.com",
+        amountTotal,
+      );
+      expect(
+        await mongo.requests.findOne({ _id: "paid-call" }),
+      ).not.toHaveProperty("freeCallEmail");
+      await h.run(dispatchCall);
+      expect(
+        await h.run(readCallRequest("paid-call", accessToken)),
+      ).toMatchObject({ status: "dialed", error: null });
+      expect(h.dial).toHaveBeenCalledTimes(4);
+    },
+  );
+  it("allows exactly 3 free calls across concurrent dispatchers", async () => {
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        completedCheckout(`free-${index}`, "payer@example.com"),
+      ),
+    );
+    await Promise.all(Array.from({ length: 10 }, () => h.run(dispatchCall)));
+    expect(h.dial).toHaveBeenCalledTimes(3);
+    expect(await mongo.requests.countDocuments({ status: "dialed" })).toBe(3);
+    expect(
+      await mongo.requests.countDocuments({
+        status: "failed",
+        error: "daily_free_call_limit",
+      }),
+    ).toBe(7);
+  });
+  it.each(["preflight", "dial"])(
+    "releases the Redis reservation when %s fails",
+    async (failure) => {
+      await completedCheckout("failed-free", "payer@example.com");
+      if (failure === "preflight")
+        h.check.mockReturnValueOnce(
+          Effect.fail(new PreflightError({ code: "blocked_number" })),
+        );
+      else h.dial.mockRejectedValueOnce(new Error("Dial failed"));
+      await h.run(dispatchCall);
+      expect(
+        (await mongo.requests.findOne({ _id: "failed-free" }))?.status,
+      ).toBe("failed");
+      for (let index = 0; index < 3; index++) {
+        await completedCheckout(`free-${index}`, "payer@example.com");
+        await h.run(dispatchCall);
+      }
+      expect(await mongo.requests.countDocuments({ status: "dialed" })).toBe(3);
+      await completedCheckout("fourth", "payer@example.com");
+      await h.run(dispatchCall);
+      expect((await mongo.requests.findOne({ _id: "fourth" }))?.error).toBe(
+        "daily_free_call_limit",
+      );
+    },
+  );
+  it("releases a free-call reservation on interruption", async () => {
+    await completedCheckout("interrupted-free", "payer@example.com");
+    let started!: () => void;
+    const signal = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    h.dial.mockImplementationOnce(() => {
+      started();
+      return new Promise(() => {});
+    });
+    const fiber = Effect.runFork(h.provide(dispatchCall));
+    await signal;
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    expect(
+      (await mongo.requests.findOne({ _id: "interrupted-free" }))?.status,
+    ).toBe("failed");
+    expect(await redis.keys(`${prefix}*`)).toEqual([]);
+  });
   it.each(["unpaid", "expired"] as const)(
     "does not dial a %s request after its Checkout deadline",
     async (status) => {
