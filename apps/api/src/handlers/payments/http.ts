@@ -13,6 +13,7 @@ import {
   type RequestDoc,
 } from "../../clients/mongo.js";
 import {
+  isCompletedCheckout,
   StripeClient,
   StripeError,
   type CheckoutSession,
@@ -280,7 +281,7 @@ export const createCallRequest = (
         !session.url ||
         session.mode !== "payment" ||
         session.client_reference_id !== record._id ||
-        session.amount_total !== record.amount ||
+        session.amount_subtotal !== record.amount ||
         session.currency !== record.currency ||
         session.metadata?.request_snapshot_hash !== digest ||
         session.metadata?.terms_version !== record.terms.version ||
@@ -357,9 +358,7 @@ export const recordPaidCheckout = (
 ) =>
   Effect.gen(function* () {
     if (
-      session.mode !== "payment" ||
-      session.status !== "complete" ||
-      session.payment_status !== "paid" ||
+      !isCompletedCheckout(session) ||
       session.consent?.terms_of_service !== "accepted"
     )
       return yield* new PaymentError({ code: "invalid_request" });
@@ -376,10 +375,15 @@ export const recordPaidCheckout = (
       !session.id ||
       !session.client_reference_id ||
       !customerId ||
-      !intentId ||
+      (!intentId && session.payment_status !== "no_payment_required") ||
       !Number.isSafeInteger(session.amount_total) ||
       session.amount_total === null ||
-      session.amount_total <= 0 ||
+      session.amount_total < 0 ||
+      (session.payment_status === "paid" && session.amount_total === 0) ||
+      !Number.isSafeInteger(session.amount_subtotal) ||
+      session.amount_subtotal === null ||
+      session.amount_subtotal <= 0 ||
+      session.amount_total > session.amount_subtotal ||
       !session.currency
     )
       return yield* new PaymentError({ code: "invalid_request" });
@@ -396,13 +400,14 @@ export const recordPaidCheckout = (
       stripeAccountId: accountId,
       livemode: session.livemode,
       checkoutSessionId: session.id,
-      paymentIntentId: intentId,
+      paymentIntentId: intentId ?? null,
       customer: {
         stripeId: customerId,
         name: session.customer_details?.name ?? null,
         email: session.customer_details?.email ?? null,
         phone: session.customer_details?.phone ?? null,
       },
+      amountSubtotal: session.amount_subtotal,
       amountTotal: session.amount_total,
       currency: session.currency,
       recordedAt: new Date(),

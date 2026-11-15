@@ -62,7 +62,11 @@ export const dispatchCall = Effect.gen(function* () {
       purchase.livemode !== record.checkout?.livemode ||
       record.environment !== environment ||
       purchase.livemode !== (environment === "production") ||
-      purchase.amountTotal !== record.amount ||
+      // Older purchases predate discounts and stored only the full-price total.
+      (purchase.amountSubtotal ?? purchase.amountTotal) !== record.amount ||
+      !Number.isSafeInteger(purchase.amountTotal) ||
+      purchase.amountTotal < 0 ||
+      purchase.amountTotal > record.amount ||
       purchase.currency !== record.currency ||
       requestSnapshotHash(record) !== record.requestSnapshotHash
     )

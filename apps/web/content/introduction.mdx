@@ -1,8 +1,10 @@
 # Introduction
 
-Corbyn AI makes phone calls for AI agents. A person asks their agent to make a call. The agent sends Corbyn AI the number and what the call is for, pays through Stripe Checkout, and an AI voice agent makes the call. When the call ends, the transcript is ready to read.
+Corbyn AI makes phone calls for AI agents. A person asks their agent to make a call. The agent sends Corbyn AI the number and what the call is for, completes Stripe Checkout, and an AI voice agent makes the call. When the call ends, the transcript is ready to read.
 
-**Each call costs $0.50 USD and can last up to 30 minutes.** Calls go to US phone numbers only. There’s no account, subscription, or API key. You pay once per call, and nothing is dialed until you do.
+**Each call costs $0.50 USD and can last up to 30 minutes.** Calls go to US phone numbers only. There’s no account, subscription, or API key. You complete Stripe Checkout once per call before anything is dialed.
+
+**Try a free call with code `FREECALL`.** Apply it in Stripe Checkout for a $0.00 total with no card required.
 
 ## For AI agents
 
@@ -12,7 +14,7 @@ Here’s the whole flow:
 
 1. **Confirm the details** with the person you’re working for.
 2. **Create the call** with `POST https://corbyn.ai/api/call`.
-3. **Pay for it** from the `dashboard_url`, then immediately send that URL to your person.
+3. **Complete Checkout** from the `checkout_url`, then immediately send that URL to your person.
 4. **Check the status** until the call ends.
 5. **Read the transcript** and tell your person how it went.
 
@@ -22,9 +24,9 @@ You need three things:
 
 - **The number to call.** It must be a US number in E.164 format: `+1`, then the 10-digit number, with no spaces or dashes. For example, `+12015550123`. Corbyn AI calls the 50 states and Washington, D.C., including toll-free numbers. It doesn’t call US territories such as Puerto Rico or Guam, Canada or other countries that share the `+1` code, or premium-rate `900` numbers.
 - **The prompt.** The voice agent knows only what you write here, so write it as instructions to that agent: who it’s calling, on whose behalf, what it needs to find out or get done, and any details it might be asked for, such as a name, date, or booking reference. It can press keypad digits to get through phone menus.
-- **A way to pay.** You complete the checkout yourself, so you need a card your person has authorized you to use.
+- **A way to pay.** You complete the checkout yourself, so you need a card your person has authorized you to use, or an available `FREECALL` redemption.
 
-Read the number, a one-line summary of the call, and the $0.50 price back to your person, and wait for a yes before you pay. Once it’s paid for, this is a real call to a real phone.
+Read the number, a one-line summary of the call, and the price ($0.50, or $0.00 with `FREECALL`) back to your person, and wait for a yes before you complete Checkout. Completing Checkout starts a real call to a real phone.
 
 ## 2. Create the call
 
@@ -64,19 +66,19 @@ If the request fails, the body names the problem:
 
 Nothing is charged until you pay, so it’s safe to send the request again after an error. Each attempt creates a separate request, and any you don’t pay for expire on their own.
 
-## 3. Pay for the call
+## 3. Complete Checkout
 
-Open `checkout_url` in your browser and complete Stripe Checkout with the card your person authorized. Checkout shows a single item, **Phone call**, for $0.50. If the card’s bank asks for extra verification, your person may need to approve the payment.
+Open `checkout_url` in your browser. Checkout shows a single item, **Phone call**, for $0.50. To redeem a free call, select **Add promotion code**, enter `FREECALL`, and apply it before completing Checkout. Check that the total is $0.00; you won’t need a card, but you must enter your email and accept the Terms. If the code is no longer available, the regular $0.50 price applies. If the card’s bank asks for extra verification, your person may need to approve the payment.
 
-**Once payment succeeds, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`, so it opens in their browser too.
+**Once Checkout completes, immediately send the user their dashboard URL. Don’t wait for the call to finish or for the user to ask. Then check the call status.** Send the full `dashboard_url`, including `#token=…`, so it opens in their browser too.
 
-After payment, Stripe brings that browser to the unlocked dashboard, where you can watch the call’s status and transcript. You don’t need to open `dashboard_url` first. To open the dashboard in another browser, use the full `dashboard_url` you saved when creating the call.
+After Checkout, Stripe brings that browser to the unlocked dashboard, where you can watch the call’s status and transcript. You don’t need to open `dashboard_url` first. To open the dashboard in another browser, use the full `dashboard_url` you saved when creating the call.
 
 The checkout expires 60 minutes after you create the call. If it expires, nothing is charged; create a new call if your person still wants one.
 
 ## 4. Check the status
 
-Corbyn AI dials as soon as Stripe confirms the payment. You can watch the dashboard, or check progress every few seconds through the API with your token:
+Corbyn AI dials as soon as Stripe confirms the paid or free checkout. You can watch the dashboard, or check progress every few seconds through the API with your token:
 
 ```bash
 curl https://corbyn.ai/api/call/<call_id> \
@@ -87,8 +89,8 @@ The status response also includes `dashboard_url`. If you haven’t sent it to y
 
 `status` tells you where the call is:
 
-- `unpaid`: waiting for payment.
-- `paid`, then `dialing`: payment is confirmed and the phone is about to ring.
+- `unpaid`: waiting for Checkout to complete.
+- `paid`, then `dialing`: paid or free Checkout is confirmed and the phone is about to ring.
 - `dialed`: the call was placed. Now watch the `call` object.
 - `expired`: the checkout wasn’t completed in time. Nothing was charged.
 - `failed`: the call couldn’t be placed. It won’t be retried, so let your person know.
@@ -123,6 +125,6 @@ Then tell your person how it went: what was said, whether the goal was met, and 
 
 ## Payment
 
-Each call is a one-time purchase of $0.50 USD, paid through Stripe Checkout by the agent placing the call. The price is shown before payment, and card details go to Stripe, never to Corbyn AI. The call is placed only after Stripe confirms payment, and it can last up to 30 minutes. Calls go to US phone numbers only.
+Each call is a one-time purchase of $0.50 USD, paid through Stripe Checkout by the agent placing the call. The price is shown before payment, and card details go to Stripe, never to Corbyn AI. With an available `FREECALL` redemption, the total is $0.00 and no card is required. The call is placed only after Stripe confirms Checkout is complete, and it can last up to 30 minutes. Calls go to US phone numbers only.
 
 For every endpoint and field, safe retries, and live events, see the [Documentation](/documentation).

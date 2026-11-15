@@ -231,6 +231,7 @@ describe("checkout", () => {
       payment_status: "paid",
       livemode: true,
       client_reference_id: "request-test",
+      amount_subtotal: 50,
       amount_total: 50,
       currency: "usd",
       metadata: {
@@ -275,6 +276,7 @@ describe("checkout", () => {
             status: "open",
             payment_status: "unpaid",
             client_reference_id: request.requestId,
+            amount_subtotal: request.amount,
             amount_total: request.amount,
             currency: request.currency,
             metadata: {
@@ -783,6 +785,7 @@ describe("checkout", () => {
         session: sessionFixture({
           id: "bad",
           client_reference_id: r.requestId,
+          amount_subtotal: 1,
           amount_total: 1,
         }),
       }));
@@ -1161,6 +1164,7 @@ describe("purchases", () => {
       consent: { terms_of_service: "accepted", promotions: null },
       livemode: false,
       client_reference_id: "request-test",
+      amount_subtotal: 50,
       amount_total: 50,
       currency: "usd",
       metadata: {
@@ -1206,6 +1210,7 @@ describe("purchases", () => {
       "customer",
       "client_reference_id",
       "payment_intent",
+      "amount_subtotal",
       "amount_total",
       "currency",
     ] as const)("requires %s", async (field) => {
@@ -1222,6 +1227,51 @@ describe("purchases", () => {
         ),
       ).rejects.toThrow("invalid_request");
       expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+    it("records a fully discounted checkout without a payment intent", async () => {
+      const mongo = fakeMongo();
+      mongo.purchases.findOneAndUpdate.mockImplementation(
+        async (_filter, update) => update.$setOnInsert,
+      );
+      const purchase = await Effect.runPromise(
+        recordPaidCheckout(
+          mongo.purchases as unknown as Collection<PurchaseDoc>,
+          {
+            accountId: "acct_test",
+            session: sessionFixture({
+              payment_status: "no_payment_required",
+              amount_total: 0,
+              payment_intent: null,
+            }),
+          },
+          policies,
+        ),
+      );
+      expect(purchase).toMatchObject({
+        amountSubtotal: 50,
+        amountTotal: 0,
+        paymentIntentId: null,
+        ...policies,
+      });
+    });
+    it("still requires Terms acceptance for free checkout", async () => {
+      await expect(
+        Effect.runPromise(
+          recordPaidCheckout(
+            fakeMongo().purchases as unknown as Collection<PurchaseDoc>,
+            {
+              accountId: "acct_test",
+              session: sessionFixture({
+                payment_status: "no_payment_required",
+                amount_total: 0,
+                payment_intent: null,
+                consent: null,
+              }),
+            },
+            policies,
+          ),
+        ),
+      ).rejects.toThrow("invalid_request");
     });
     it.each(["privacy_version", "privacy_url"] as const)(
       "rejects Checkout metadata with a different %s",
@@ -1241,7 +1291,7 @@ describe("purchases", () => {
         expect(mongo.purchases.findOneAndUpdate).not.toHaveBeenCalled();
       },
     );
-    it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    it.each([0, -1, 1.5, 51, Number.MAX_SAFE_INTEGER + 1])(
       "rejects invalid amounts: %s",
       async (amount_total) => {
         await expect(
@@ -1301,6 +1351,7 @@ describe("purchases", () => {
           email: "payer@example.com",
           phone: null,
         },
+        amountSubtotal: 50,
         amountTotal: 50,
         currency: "usd",
         recordedAt: expect.any(Date),

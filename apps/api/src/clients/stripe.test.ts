@@ -59,6 +59,7 @@ describe("Stripe client", () => {
         managed_payments: { enabled: true },
         client_reference_id: input.requestId,
         customer_creation: "always",
+        allow_promotion_codes: true,
         metadata: {
           request_id: input.requestId,
           request_snapshot_hash: "hash",

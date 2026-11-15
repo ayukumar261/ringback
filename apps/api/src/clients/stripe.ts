@@ -58,6 +58,14 @@ const providerError = (error: unknown) =>
       error.requestId && { providerRequestId: error.requestId }),
   });
 
+/** Whether Checkout completed with a paid balance or a fully discounted total. */
+export const isCompletedCheckout = (session: Stripe.Checkout.Session) =>
+  session.mode === "payment" &&
+  session.status === "complete" &&
+  (session.payment_status === "paid" ||
+    (session.payment_status === "no_payment_required" &&
+      session.amount_total === 0));
+
 // makeStripeClient creates and reads Checkout sessions for one environment.
 export const makeStripeClient = (
   stripe: Stripe | undefined,
@@ -100,6 +108,7 @@ export const makeStripeClient = (
                 mode: "payment",
                 managed_payments: { enabled: true },
                 customer_creation: "always",
+                allow_promotion_codes: true,
                 client_reference_id: input.requestId,
                 metadata: {
                   request_id: input.requestId,

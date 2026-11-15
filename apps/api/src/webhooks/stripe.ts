@@ -2,7 +2,7 @@ import { HttpServerRequest } from "@effect/platform";
 import { Effect } from "effect";
 import type Stripe from "stripe";
 import { MongoClient } from "../clients/mongo.js";
-import { StripeClient } from "../clients/stripe.js";
+import { isCompletedCheckout, StripeClient } from "../clients/stripe.js";
 import { PaymentError, logPaymentError } from "../handlers/payments/errors.js";
 import {
   json,
@@ -49,7 +49,7 @@ export const handleStripeEvent = (event: Stripe.Event) =>
         session.livemode !== (record.environment === "production") ||
         session.mode !== "payment" ||
         session.client_reference_id !== record._id ||
-        session.amount_total !== record.amount ||
+        session.amount_subtotal !== record.amount ||
         session.currency !== record.currency ||
         !digest ||
         session.metadata?.request_snapshot_hash !== digest ||
@@ -57,7 +57,7 @@ export const handleStripeEvent = (event: Stripe.Event) =>
       )
         return yield* new PaymentError({ code: "conflict" });
       // current Stripe state wins over duplicate or out-of-order events
-      if (session.status !== "complete" || session.payment_status !== "paid") {
+      if (!isCompletedCheckout(session)) {
         if (session.status === "expired")
           yield* Effect.tryPromise(() =>
             mongo.requests.updateOne(

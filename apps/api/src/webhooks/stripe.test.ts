@@ -92,6 +92,7 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     consent: { terms_of_service: "accepted", promotions: null },
     livemode: false,
     client_reference_id: "request-test",
+    amount_subtotal: 50,
     amount_total: 50,
     currency: "usd",
     metadata: {
@@ -198,6 +199,45 @@ const harness = (
 };
 
 describe("Stripe webhook HTTP", () => {
+  it("queues a completed free checkout using authoritative Stripe state", async () => {
+    const session = sessionFixture({
+      payment_status: "no_payment_required",
+      amount_total: 0,
+      payment_intent: null,
+    });
+    const mongo = {
+      requests: {
+        findOne: vi.fn(async () => requestFixture()),
+        updateOne: vi.fn(async () => ({})),
+      },
+      purchases: {
+        findOneAndUpdate: vi.fn(async (_filter, update) => update.$setOnInsert),
+      },
+    };
+    const h = harness(mongo as unknown as Pick<MongoClient, "requests">);
+    h.retrieveSession.mockResolvedValue({ accountId: "acct_test", session });
+    await h.run(handleStripeEvent(event(session)));
+    expect(mongo.purchases.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        $setOnInsert: expect.objectContaining({
+          amountSubtotal: 50,
+          amountTotal: 0,
+          paymentIntentId: null,
+        }),
+      },
+      expect.anything(),
+    );
+    expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "paid",
+          purchaseId: "acct_test:test:cs_test",
+        }),
+      }),
+    );
+  });
   it("verifies the exact bytes before processing a signed event", async () => {
     const mongo = fakeMongo();
     const h = harness(mongo);
@@ -351,7 +391,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       status: "complete",
       payment_status: "paid",
       managed_payments: { enabled: true },
-      amount_subtotal: 47,
+      amount_subtotal: 50,
       amount_total: 50,
       total_details: { amount_tax: 3, amount_discount: 0, amount_shipping: 0 },
     });
@@ -455,7 +495,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
     });
   });
   it.each([
-    "amount_total",
+    "amount_subtotal",
     "currency",
     "client_reference_id",
     "livemode",
@@ -469,7 +509,7 @@ describe.skipIf(!mongoUri)("webhook persistence", () => {
       status: "complete",
       payment_status: "paid",
       [field]:
-        field === "amount_total"
+        field === "amount_subtotal"
           ? 1
           : field === "livemode"
             ? true

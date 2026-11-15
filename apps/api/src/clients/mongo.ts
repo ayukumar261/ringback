@@ -25,13 +25,15 @@ export interface PurchaseDoc {
   stripeAccountId: string;
   livemode: boolean;
   checkoutSessionId: string;
-  paymentIntentId: string;
+  paymentIntentId: string | null;
   customer: {
     stripeId: string;
     name: string | null;
     email: string | null;
     phone: string | null;
   };
+  // Original price in cents. Absent on purchases recorded before discounts.
+  amountSubtotal?: number;
   amountTotal: number;
   currency: string;
   recordedAt: Date;

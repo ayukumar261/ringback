@@ -99,6 +99,7 @@ const sessionFixture = (changes: Partial<Stripe.Checkout.Session> = {}) =>
     consent: { terms_of_service: "accepted", promotions: null },
     livemode: true,
     client_reference_id: "request-test",
+    amount_subtotal: 50,
     amount_total: 50,
     currency: "usd",
     metadata: {
@@ -222,6 +223,51 @@ const harness = (
 };
 
 describe("paid dispatch", () => {
+  it.each([0, 25, 50])(
+    "dials a verified purchase discounted to %s cents",
+    async (amountTotal) => {
+      const mongo = fakeMongo();
+      mongo.requests.findOneAndUpdate.mockResolvedValue(
+        requestFixture({
+          status: "dialing",
+          purchaseId: "acct_test:live:cs_test",
+        }),
+      );
+      mongo.purchases.findOne.mockResolvedValue(
+        purchaseFixture({
+          amountSubtotal: 50,
+          amountTotal,
+          paymentIntentId: amountTotal === 0 ? null : "pi_test",
+        }),
+      );
+      const h = harness(mongo);
+      await h.run(dispatchCall);
+      expect(h.dial).toHaveBeenCalledTimes(1);
+      expect(mongo.requests.updateOne).toHaveBeenCalledWith(
+        { _id: "request-test", status: "dialing" },
+        { $set: { status: "dialed", dialedAt: expect.any(Date) } },
+      );
+    },
+  );
+  it("rejects a discounted purchase with the wrong original price", async () => {
+    const mongo = fakeMongo();
+    mongo.requests.findOneAndUpdate.mockResolvedValue(
+      requestFixture({
+        status: "dialing",
+        purchaseId: "acct_test:live:cs_test",
+      }),
+    );
+    mongo.purchases.findOne.mockResolvedValue(
+      purchaseFixture({
+        amountSubtotal: 100,
+        amountTotal: 0,
+        paymentIntentId: null,
+      }),
+    );
+    const h = harness(mongo);
+    await h.run(dispatchCall);
+    expect(h.dial).not.toHaveBeenCalled();
+  });
   it.each([
     "unsupported_country",
     "unsupported_line_type",
@@ -461,7 +507,7 @@ describe.skipIf(!mongoUri)("dispatch persistence", () => {
       status: "complete",
       payment_status: "unpaid",
       managed_payments: { enabled: true },
-      amount_subtotal: 47,
+      amount_subtotal: 50,
       amount_total: 50,
       total_details: { amount_tax: 3, amount_discount: 0, amount_shipping: 0 },
     });
