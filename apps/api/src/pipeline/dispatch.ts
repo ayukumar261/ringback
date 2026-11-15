@@ -9,12 +9,14 @@ import {
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
 import { Preflight } from "../preflight/preflight.js";
 import { PreflightError } from "../preflight/errors.js";
+import { CallLimit } from "../preflight/limit.js";
 
 // dispatchCall claims the oldest paid call and dials it once, since a failed dial may have gone through.
 export const dispatchCall = Effect.gen(function* () {
   const mongo = yield* MongoClient;
   const settings = yield* PaymentConfig;
   const dialer = yield* LiveKitClient;
+  const limit = yield* CallLimit;
   const environment = settings.environment;
   const stale = yield* Effect.tryPromise(() =>
     mongo.requests.updateMany(
@@ -26,10 +28,12 @@ export const dispatchCall = Effect.gen(function* () {
       { $set: { status: "failed", error: "interrupted" } },
     ),
   );
-  if (stale.modifiedCount)
+  if (stale.modifiedCount) {
+    yield* limit.invalidate;
     yield* logPaymentFailure("dispatch", "interrupted").pipe(
       Effect.annotateLogs({ count: stale.modifiedCount }),
     );
+  }
   const record = yield* Effect.tryPromise(() =>
     mongo.requests.findOneAndUpdate(
       { status: "paid", environment },
@@ -47,6 +51,7 @@ export const dispatchCall = Effect.gen(function* () {
           { $set: { status: "failed", error: code } },
         ),
       );
+      yield* limit.invalidate;
     });
   yield* Effect.gen(function* () {
     const purchase = record.purchaseId
@@ -73,6 +78,8 @@ export const dispatchCall = Effect.gen(function* () {
       return yield* new PaymentError({ code: "conflict" });
     // The shared Lookup cache refreshes expired results before any dial attempt.
     const preflight = yield* Preflight;
+    // Rebuild from the paid queue even if a webhook stopped after its Mongo write.
+    yield* limit.invalidate;
     yield* preflight.check(record.to, {
       requestId: record._id,
       room: record.room,

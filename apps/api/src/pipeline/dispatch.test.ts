@@ -37,6 +37,7 @@ import { handleStripeEvent } from "../webhooks/stripe.js";
 
 import { Preflight } from "../preflight/preflight.js";
 import { PreflightError } from "../preflight/errors.js";
+import { CallLimit } from "../preflight/limit.js";
 import type { PhoneLookup } from "../clients/twilio.js";
 
 const accessToken = newAccessToken();
@@ -202,6 +203,10 @@ const harness = (
       Effect.provideService(LiveKitClient, dialer),
       Effect.provideService(Preflight, Preflight.make({ check })),
       Effect.provideService(
+        CallLimit,
+        CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
+      ),
+      Effect.provideService(
         PaymentConfig,
         PaymentConfig.make({ ...settings, ...overrides }),
       ),
@@ -215,7 +220,7 @@ const harness = (
       effect: Effect.Effect<
         A,
         E,
-        MongoClient | LiveKitClient | PaymentConfig | Preflight
+        MongoClient | LiveKitClient | PaymentConfig | Preflight | CallLimit
       >,
       overrides: Partial<Settings> = {},
     ) => Effect.runPromise(provide(effect, overrides)),
@@ -272,6 +277,8 @@ describe("paid dispatch", () => {
     "unsupported_country",
     "unsupported_line_type",
     "lookup_unavailable",
+    "daily_call_limit",
+    "call_limit_unavailable",
   ] as const)("does not dial when preflight returns %s", async (code) => {
     const mongo = fakeMongo();
     mongo.requests.findOneAndUpdate.mockResolvedValue(

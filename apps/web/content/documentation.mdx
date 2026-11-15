@@ -29,6 +29,8 @@ The `dashboard_url` carries the same token after `#token=`. Opening it gives tha
 
 Saves the call and returns a Stripe Checkout link to pay for it. Nothing is dialed until the checkout is paid.
 
+Each destination number is limited to three calls in a rolling 24-hour window, shared across all callers. Paid and free calls both count. See [Limits](#limits) for what counts and when the limit is checked.
+
 **Body**
 
 - `to` (string, required): the number to call, in E.164 format, such as `+12015550123`. Corbyn AI calls US numbers only: the 50 states and Washington, D.C.
@@ -153,6 +155,8 @@ A call can also end early:
 
 - `expired`: the checkout wasn’t paid within 60 minutes. Nothing was charged.
 - `failed`: payment failed (`error` is `payment_failed`) or the call couldn’t be placed. Nothing is dialed after a failed payment. A failed dial isn’t retried, because it may have gone through.
+
+A call can also fail before dialing with `error: "daily_call_limit"` if the destination has reached its limit, or `error: "call_limit_unavailable"` if the limit couldn’t be checked. These calls aren’t dialed or automatically retried.
 
 After `dialed`, `call` appears when someone answers, and `call.status` changes from `active` to `ended` when the conversation is over. If `call` is still `null` two minutes after the status changes to `dialed`, nobody answered.
 
@@ -285,12 +289,16 @@ Errors return a JSON body with a code:
 { "error": "invalid_request" }
 ```
 
+Call-limit errors also include a `message` field explaining what happened.
+
 - `400 invalid_request`: the request is malformed. For example, the body isn’t valid JSON or is over 100 KB, `to` isn’t in E.164 format, `prompt` is empty or too long, or an idempotency header is invalid.
 - `401 unauthorized`: a request to read a call has no token, or the `Authorization` header is malformed.
 - `404 not_found`: the call doesn’t exist, or the token is wrong, expired, or revoked.
 - `409 conflict`: a retry didn’t match the original request or credentials.
+- `429 daily_call_limit`: the destination already has three counted requests in the last 24 hours. Wait for a request to leave that window before creating another call.
 - `500 internal`: something went wrong on Corbyn AI’s side.
 - `503 unavailable`: calling is briefly unavailable. Try again in a minute.
+- `503 call_limit_unavailable`: the destination’s call count couldn’t be checked. Call creation is rejected; try again later.
 
 ## Limits
 
@@ -301,6 +309,11 @@ Errors return a JSON body with a code:
 - **Prompt:** 1 to 16,000 characters.
 - **Request body:** up to 100 KB.
 - **Destinations:** US phone numbers in the 50 states and Washington, D.C.
+- **Calls per destination:** three in a rolling 24-hour window, shared across all callers. Applies to paid and free calls.
+
+Requests with status `paid`, `dialing`, or `dialed` count toward the destination limit, using their `created_at` timestamp. Unpaid, expired, and failed requests don’t count. The request being checked is excluded, so retries of the same call don’t consume another slot. Each counted request leaves the window 24 hours after its creation.
+
+The limit is checked before creating Checkout and again before dialing. If several checkouts are paid at once, a request can fail the final check after payment. These failures aren’t automatically refunded.
 
 ## Health check
 

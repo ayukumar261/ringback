@@ -122,6 +122,7 @@ export const createRequestIndexes = (requests: Collection<RequestDoc>) =>
       },
     ),
     requests.createIndex({ status: 1, createdAt: 1 }),
+    requests.createIndex({ to: 1, createdAt: 1 }),
     requests.createIndex({ room: 1 }),
   ]);
 

@@ -102,6 +102,15 @@ jobs:
   Api:
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       mongo:
         image: mongo:8
         # MongoDB 8 won't start on the runner's 6.19+ kernel while tcmalloc owns rseq (SERVER-121912); give rseq to glibc.
@@ -143,3 +152,4 @@ jobs:
         run: pnpm test
         env:
           MONGODB_URI: mongodb://127.0.0.1:27017
+          REDIS_URL: redis://127.0.0.1:6379

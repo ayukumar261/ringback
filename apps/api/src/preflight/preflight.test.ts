@@ -61,6 +61,25 @@ describe("phone preflight", () => {
     });
   });
 
+  it("checks the destination limit before Lookup, excluding the current request", async () => {
+    const h = harness();
+    const checkLimit = vi.fn(() =>
+      Effect.fail(new PreflightError({ code: "daily_call_limit" })),
+    );
+    const preflight = makePreflight(h.lookup, undefined, checkLimit);
+    const error = await Effect.runPromise(
+      preflight
+        .check("+14155552671", { requestId: "current" })
+        .pipe(Effect.flip),
+    );
+    expect(error.code).toBe("daily_call_limit");
+    expect(checkLimit).toHaveBeenCalledExactlyOnceWith(
+      "+14155552671",
+      "current",
+    );
+    expect(h.lookup).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["911", "invalid_destination"],
     ["411", "invalid_destination"],

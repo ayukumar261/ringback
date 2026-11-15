@@ -15,6 +15,7 @@ import { CallsConfig } from "./handlers/calls/config.js";
 import { DispatchLive } from "./pipeline/dispatch.js";
 import { TwilioClient } from "./clients/twilio.js";
 import { Preflight } from "./preflight/preflight.js";
+import { CallLimit } from "./preflight/limit.js";
 import { ElevenLabsClient } from "./clients/elevenlabs.js";
 import { ExpenseCollectorLive } from "./pipeline/collector.js";
 
@@ -57,6 +58,7 @@ const AppLive = Layer.mergeAll(
   ExpenseCollectorLive,
 ).pipe(
   Layer.provide(Preflight.Default),
+  Layer.provide(CallLimit.Default),
   Layer.provide(
     Layer.mergeAll(
       PaymentConfig.Default,

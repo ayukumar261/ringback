@@ -62,6 +62,7 @@ import {
 } from "./access.js";
 
 import { Preflight } from "../../preflight/preflight.js";
+import { CallLimit } from "../../preflight/limit.js";
 import { PreflightError } from "../../preflight/errors.js";
 import type { PhoneLookup } from "../../clients/twilio.js";
 
@@ -335,6 +336,10 @@ describe("checkout", () => {
         Effect.provideService(LiveKitClient, dialer),
         Effect.provideService(Preflight, Preflight.make({ check })),
         Effect.provideService(
+          CallLimit,
+          CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
+        ),
+        Effect.provideService(
           PaymentConfig,
           PaymentConfig.make({ ...settings, ...overrides }),
         ),
@@ -359,6 +364,25 @@ describe("checkout", () => {
   };
 
   describe("checkout HTTP", () => {
+    it.each(["daily_call_limit", "call_limit_unavailable"] as const)(
+      "returns an actionable %s error without creating a Checkout",
+      async (code) => {
+        const mongo = fakeMongo();
+        const h = harness(mongo);
+        const error = new PreflightError({ code });
+        h.check.mockReturnValueOnce(Effect.fail(error));
+        const response = await h.http(route)(request(JSON.stringify(input)));
+        expect(response.status).toBe(code === "daily_call_limit" ? 429 : 503);
+        expect(await response.json()).toEqual({
+          error: code,
+          message: error.message,
+        });
+        expect(mongo.requests.insertOne).not.toHaveBeenCalled();
+        expect(h.createSession).not.toHaveBeenCalled();
+        expect(h.ready).not.toHaveBeenCalled();
+      },
+    );
+
     it.each([
       ["unsupported_country", 422],
       ["unsupported_line_type", 422],

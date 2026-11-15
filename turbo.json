@@ -15,7 +15,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "env": ["MONGODB_URI"]
+      "env": ["MONGODB_URI", "REDIS_URL"]
     },
     "dev": {
       "cache": false,

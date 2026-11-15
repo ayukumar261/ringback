@@ -9,6 +9,7 @@ import { MongoClient } from "../clients/mongo.js";
 import { environmentConfig } from "../environment.js";
 import { recordLookup, type ExpenseAttribution } from "../expenses/store.js";
 import { PreflightError } from "./errors.js";
+import { CallLimit } from "./limit.js";
 
 type Lookup = (
   number: string,
@@ -23,6 +24,7 @@ const voiceTypes = ["landline", "mobile", "fixedVoip", "nonFixedVoip"];
 export const makePreflight = (
   lookup: Lookup,
   record: RecordLookup = () => Effect.void,
+  checkLimit: CallLimit["check"] = () => Effect.void,
 ) => ({
   check: (
     number: string,
@@ -46,6 +48,7 @@ export const makePreflight = (
       const sharedTollFree = tollFree.test(number);
       if (!sharedTollFree && phone.country !== "US")
         return yield* new PreflightError({ code: "unsupported_country" });
+      yield* checkLimit(number, attribution.requestId);
       const result = yield* lookup(number, record(attribution)).pipe(
         Effect.mapError((e) => new PreflightError({ code: e.code })),
       );
@@ -72,8 +75,11 @@ export class Preflight extends Effect.Service<Preflight>()("api/Preflight", {
     const client = yield* TwilioClient;
     const mongo = yield* MongoClient;
     const environment = yield* environmentConfig;
-    return makePreflight(client.lookup, (attribution) =>
-      recordLookup(mongo, environment, attribution),
+    const limit = yield* CallLimit;
+    return makePreflight(
+      client.lookup,
+      (attribution) => recordLookup(mongo, environment, attribution),
+      limit.check,
     );
   }),
 }) {}

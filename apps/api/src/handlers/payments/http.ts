@@ -96,7 +96,17 @@ export const paymentResponse = <E, R>(
         const status = preflightStatus(error);
         return (
           status >= 500 ? logPaymentError(operation, error) : Effect.void
-        ).pipe(Effect.zipRight(json({ error: error.code }, status)));
+        ).pipe(
+          Effect.zipRight(
+            json(
+              {
+                error: error.code,
+                ...(error.message !== error.code && { message: error.message }),
+              },
+              status,
+            ),
+          ),
+        );
       }
       const code =
         error instanceof PaymentError ||

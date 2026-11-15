@@ -16,6 +16,7 @@ import { StripeClient } from "../../clients/stripe.js";
 import { LiveKitClient } from "../../clients/livekit.js";
 import { CallFeed } from "../../pipeline/feed.js";
 import { Preflight } from "../../preflight/preflight.js";
+import { CallLimit } from "../../preflight/limit.js";
 import { router } from "../../router.js";
 import { AudioConfig } from "../audio/config.js";
 import { CallsConfig } from "./config.js";
@@ -157,6 +158,10 @@ const harness = async (keepaliveMs = 15000, retryMs = 3000) => {
       Effect.provideService(RedisClient, { xrange } as unknown as RedisClient),
       Effect.provideService(CallFeed, feed),
       Effect.provideService(PaymentConfig, settings),
+      Effect.provideService(
+        CallLimit,
+        CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
+      ),
       Effect.provideService(
         Preflight,
         Preflight.make({
