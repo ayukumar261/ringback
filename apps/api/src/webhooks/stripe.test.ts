@@ -26,7 +26,6 @@ import {
   afterAll,
 } from "vitest";
 import { handleStripeEvent, stripeWebhook } from "./stripe.js";
-import { CallLimit } from "../preflight/limit.js";
 import { readCallRequest } from "../handlers/payments/http.js";
 import { newAccessToken, newCallAccess } from "../handlers/payments/access.js";
 
@@ -160,13 +159,9 @@ const harness = (
     effect.pipe(
       Effect.provideService(MongoClient, mongo as MongoClient),
       Effect.provideService(StripeClient, stripe),
-      Effect.provideService(
-        CallLimit,
-        CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
-      ),
     );
   const run = <A, E>(
-    effect: Effect.Effect<A, E, MongoClient | StripeClient | CallLimit>,
+    effect: Effect.Effect<A, E, MongoClient | StripeClient>,
   ) => Effect.runPromise(provide(effect));
   // Seed the checkout state that this webhook receives, without invoking the checkout handler.
   const checkout = async (changes: Partial<RequestDoc> = {}) => {

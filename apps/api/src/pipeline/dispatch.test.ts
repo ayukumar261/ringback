@@ -40,7 +40,7 @@ import { handleStripeEvent } from "../webhooks/stripe.js";
 
 import { Preflight } from "../preflight/preflight.js";
 import { PreflightError } from "../preflight/errors.js";
-import { CallLimit } from "../preflight/limit.js";
+import { CallLimit, makeCallLimit } from "../preflight/limit.js";
 import type { PhoneLookup } from "../clients/twilio.js";
 
 const accessToken = newAccessToken();
@@ -183,6 +183,12 @@ const harness = (
     | Pick<MongoClient, "requests" | "purchases">
     | ReturnType<typeof fakeMongo> = fakeMongo(),
   redis: Pick<Redis, "eval"> = fakeRedis(),
+  destinationLimit = CallLimit.make({
+    check: () => Effect.void,
+    reserve: () => Effect.void,
+    complete: () => Effect.void,
+    release: () => Effect.void,
+  }),
 ) => {
   const ready = vi.fn(async () => {});
   const dial = vi.fn<(request: DialInput) => Promise<void>>(async () => {});
@@ -221,10 +227,7 @@ const harness = (
         ResendClient.make({ send: (email) => Effect.sync(() => send(email)) }),
       ),
       Effect.provideService(Preflight, Preflight.make({ check })),
-      Effect.provideService(
-        CallLimit,
-        CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
-      ),
+      Effect.provideService(CallLimit, destinationLimit),
       Effect.provideService(
         PaymentConfig,
         PaymentConfig.make({ ...settings, ...overrides }),
@@ -585,6 +588,7 @@ describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
     requests: db.collection<RequestDoc>("requests"),
     purchases: db.collection<PurchaseDoc>("purchases"),
   };
+  const destinationLimit = CallLimit.make(makeCallLimit(redis, "production"));
   beforeAll(async () => {
     await Promise.all([driver.connect(), redis.connect()]);
     await Promise.all([
@@ -607,7 +611,7 @@ describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
     }
   });
   const h = {
-    ...harness(mongo, redis),
+    ...harness(mongo, redis, destinationLimit),
     mongo,
     // paid seeds a paid, queued request without calling the other handlers
     paid: async (overrides: Partial<Pick<RequestDoc, "environment">> = {}) => {
@@ -656,8 +660,10 @@ describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
     id: string,
     email: string,
     amountTotal = 0,
+    to = input.to,
   ) => {
     const record = requestFixture({
+      to,
       _id: id,
       room: `call_${id}`,
       checkout: { ...requestFixture().checkout!, id: `cs_${id}` },
@@ -718,6 +724,7 @@ describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
         "paid-call",
         "PAYER+paid@example.com",
         amountTotal,
+        "+15551234568",
       );
       expect(
         await mongo.requests.findOne({ _id: "paid-call" }),
@@ -744,6 +751,58 @@ describe.skipIf(!mongoUri || !redisUrl)("dispatch persistence", () => {
         error: "daily_free_call_limit",
       }),
     ).toBe(7);
+  });
+  it("allows exactly 3 paid destination calls across concurrent dispatchers", async () => {
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        completedCheckout(`paid-${index}`, `payer-${index}@example.com`, 50),
+      ),
+    );
+    await Promise.all(Array.from({ length: 10 }, () => h.run(dispatchCall)));
+    expect(h.dial).toHaveBeenCalledTimes(3);
+    expect(await mongo.requests.countDocuments({ status: "dialed" })).toBe(3);
+    expect(
+      await mongo.requests.countDocuments({
+        status: "failed",
+        error: "daily_call_limit",
+      }),
+    ).toBe(7);
+    expect(await mongo.purchases.countDocuments()).toBe(10);
+  });
+  it("clears destination usage without rebuilding from Mongo call history", async () => {
+    for (let index = 0; index < 3; index++) {
+      await completedCheckout(`before-${index}`, "payer@example.com", 50);
+      await h.run(dispatchCall);
+    }
+    await expect(
+      Effect.runPromise(destinationLimit.check(input.to)),
+    ).rejects.toThrow("3 calls");
+    await clearQuota();
+    await expect(
+      Effect.runPromise(destinationLimit.check(input.to)),
+    ).resolves.toBeUndefined();
+    expect(await mongo.requests.countDocuments({ status: "dialed" })).toBe(3);
+    expect(await mongo.purchases.countDocuments()).toBe(3);
+    await completedCheckout("after-reset", "payer@example.com", 50);
+    await h.run(dispatchCall);
+    expect(h.dial).toHaveBeenCalledTimes(4);
+    expect(await mongo.requests.countDocuments({ status: "dialed" })).toBe(4);
+  });
+  it("retains both completed quotas if Mongo bookkeeping fails after dialing", async () => {
+    await completedCheckout("bookkeeping-failure", "payer@example.com");
+    const update = vi
+      .spyOn(mongo.requests, "updateOne")
+      .mockRejectedValueOnce(new Error("Mongo unavailable"));
+    try {
+      await h.run(dispatchCall);
+      expect(h.dial).toHaveBeenCalledTimes(1);
+      const dialedKeys = await redis.keys(`${prefix}*:dialed`);
+      expect(dialedKeys).toHaveLength(2);
+      for (const key of dialedKeys)
+        expect(await redis.zcard(key.slice(prefix.length))).toBe(1);
+    } finally {
+      update.mockRestore();
+    }
   });
   it.each(["preflight", "dial"])(
     "releases the Redis reservation when %s fails",

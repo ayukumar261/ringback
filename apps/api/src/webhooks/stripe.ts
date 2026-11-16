@@ -11,7 +11,6 @@ import {
   recordPaidCheckout,
 } from "../handlers/payments/http.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
-import { CallLimit } from "../preflight/limit.js";
 
 // events are the Checkout events that can move a request forward.
 const events = new Set([
@@ -104,8 +103,6 @@ export const handleStripeEvent = (event: Stripe.Event) =>
           },
         ),
       );
-      const limit = yield* CallLimit;
-      yield* limit.invalidate;
       return { received: true };
     }).pipe(
       Effect.tapError((error) => logPaymentError("webhook", error)),

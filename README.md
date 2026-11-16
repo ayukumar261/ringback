@@ -289,7 +289,11 @@ curl -X POST http://localhost:3001/call \
   }'
 ```
 
-The destination must use E.164 format and pass the US or shared NANP toll-free destination and line-type checks. Emergency/service codes and premium ranges are blocked before Lookup. Destination refusals return HTTP `422` with one of `invalid_destination`, `unsupported_country`, `blocked_number`, or `unsupported_line_type`; Lookup failures return HTTP `503` as described under environment configuration. Rejected new requests create neither a call request nor a Checkout session. The prompt must contain 1–16,000 characters after trimming. A successful request returns `201`:
+The destination must use E.164 format and pass the US or shared NANP toll-free destination and line-type checks. Emergency/service codes and premium ranges are blocked before Lookup. Destination refusals return HTTP `422` with one of `invalid_destination`, `unsupported_country`, `blocked_number`, or `unsupported_line_type`; Lookup failures return HTTP `503` as described under environment configuration. Rejected new requests create neither a call request nor a Checkout session. The prompt must contain 1–16,000 characters after trimming.
+
+Both call limits use Redis as their source of truth: three calls per destination and three fully discounted calls per normalized Checkout email in a rolling 24-hour window. The destination check runs before Checkout; dispatch atomically reserves capacity before dialing, releases failed reservations, and records successful dials for 24 hours. Pending reservations expire after two minutes. MongoDB stores call and payment history but does not populate either quota. Deleting the corresponding Redis quota keys resets usage without changing that history. Destination keys use `call-limit:<environment>:{<number>}:pending` and `:dialed`; email keys use `free-call-limit:<environment>:{<sha256-of-normalized-email>}:pending` and `:dialed`.
+
+A successful request returns `201`:
 
 ```json
 {

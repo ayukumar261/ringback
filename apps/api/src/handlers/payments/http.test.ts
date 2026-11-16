@@ -345,7 +345,12 @@ describe("checkout", () => {
         Effect.provideService(Preflight, Preflight.make({ check })),
         Effect.provideService(
           CallLimit,
-          CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
+          CallLimit.make({
+            check: () => Effect.void,
+            reserve: () => Effect.void,
+            complete: () => Effect.void,
+            release: () => Effect.void,
+          }),
         ),
         Effect.provideService(
           PaymentConfig,

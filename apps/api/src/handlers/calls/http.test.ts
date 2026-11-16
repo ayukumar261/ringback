@@ -161,7 +161,12 @@ const harness = async (keepaliveMs = 15000, retryMs = 3000) => {
       Effect.provideService(PaymentConfig, settings),
       Effect.provideService(
         CallLimit,
-        CallLimit.make({ check: () => Effect.void, invalidate: Effect.void }),
+        CallLimit.make({
+          check: () => Effect.void,
+          reserve: () => Effect.void,
+          complete: () => Effect.void,
+          release: () => Effect.void,
+        }),
       ),
       Effect.provideService(
         Preflight,

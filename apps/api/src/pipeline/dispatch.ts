@@ -34,7 +34,6 @@ export const dispatchCall = Effect.gen(function* () {
     ),
   );
   if (stale.modifiedCount) {
-    yield* limit.invalidate;
     yield* logPaymentFailure("dispatch", "interrupted").pipe(
       Effect.annotateLogs({ count: stale.modifiedCount }),
     );
@@ -47,10 +46,12 @@ export const dispatchCall = Effect.gen(function* () {
     ),
   );
   if (!record) return false;
+  let releaseDestination: Effect.Effect<void> = Effect.void;
   let releaseFreeCall: Effect.Effect<void> = Effect.void;
   let completeFreeCall: Effect.Effect<void, FreeCallLimitError> = Effect.void;
   const recordError = (code: string) =>
     Effect.gen(function* () {
+      yield* releaseDestination;
       yield* releaseFreeCall;
       yield* logPaymentFailure("dispatch", code);
       yield* Effect.tryPromise(() =>
@@ -59,7 +60,6 @@ export const dispatchCall = Effect.gen(function* () {
           { $set: { status: "failed", error: code } },
         ),
       );
-      yield* limit.invalidate;
     });
   yield* Effect.gen(function* () {
     const purchase = record.purchaseId
@@ -99,18 +99,27 @@ export const dispatchCall = Effect.gen(function* () {
     }
     // The shared Lookup cache refreshes expired results before any dial attempt.
     const preflight = yield* Preflight;
-    // Rebuild from the paid queue even if a webhook stopped after its Mongo write.
-    yield* limit.invalidate;
     yield* preflight.check(record.to, {
       requestId: record._id,
       room: record.room,
     });
+    // The Checkout check is advisory; atomically claim capacity immediately
+    // before dialing so concurrent dispatchers cannot exceed the quota.
+    yield* limit.reserve(record.to, record._id);
+    releaseDestination = limit
+      .release(record.to, record._id)
+      .pipe(Effect.ignore);
     yield* dialer.dial(record).pipe(
       Effect.timeoutFail({
         duration: "60 seconds",
         onTimeout: () => new LiveKitError({ code: "unavailable" }),
       }),
     );
+    // Once the provider accepts the call, later bookkeeping failures must not
+    // give either quota's capacity back.
+    releaseDestination = Effect.void;
+    releaseFreeCall = Effect.void;
+    yield* limit.complete(record.to, record._id);
     yield* completeFreeCall;
     yield* Effect.tryPromise(() =>
       mongo.requests.updateOne(
