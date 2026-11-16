@@ -21,6 +21,7 @@ import {
 import { RedisClient } from "../clients/redis.js";
 import { LiveKitClient } from "../clients/livekit.js";
 import { StripeClient } from "../clients/stripe.js";
+import { ResendClient } from "../clients/resend.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import { createCallRequest } from "../handlers/payments/http.js";
 import { requestSnapshotHash } from "../handlers/payments/schema.js";
@@ -88,6 +89,7 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
       | Preflight
       | CallLimit
       | StripeClient
+      | ResendClient
     >,
   ) =>
     Effect.runPromise(
@@ -105,6 +107,10 @@ describe.skipIf(!mongoUri || !redisUrl)("Redis destination call limit", () => {
         ),
         Effect.provideService(CallLimit, CallLimit.make(limit)),
         Effect.provideService(StripeClient, stripe),
+        Effect.provideService(
+          ResendClient,
+          ResendClient.make({ send: () => Effect.void }),
+        ),
       ),
     );
   const clearRedis = async () => {

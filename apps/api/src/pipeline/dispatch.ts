@@ -2,6 +2,7 @@ import { Effect, Layer, Schedule } from "effect";
 import { MongoClient } from "../clients/mongo.js";
 import { RedisClient } from "../clients/redis.js";
 import { LiveKitClient, LiveKitError } from "../clients/livekit.js";
+import { callDialedEmail, sendEmail } from "../emails/calls.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   PaymentError,
@@ -117,6 +118,7 @@ export const dispatchCall = Effect.gen(function* () {
         { $set: { status: "dialed", dialedAt: new Date() } },
       ),
     );
+    yield* sendEmail(callDialedEmail(record, purchase));
   }).pipe(
     Effect.catchAll((e) =>
       recordError(

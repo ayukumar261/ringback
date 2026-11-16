@@ -14,6 +14,7 @@ import {
 import { RedisClient } from "../../clients/redis.js";
 import { StripeClient } from "../../clients/stripe.js";
 import { LiveKitClient } from "../../clients/livekit.js";
+import { ResendClient } from "../../clients/resend.js";
 import { CallFeed } from "../../pipeline/feed.js";
 import { Preflight } from "../../preflight/preflight.js";
 import { CallLimit } from "../../preflight/limit.js";
@@ -178,6 +179,7 @@ const harness = async (keepaliveMs = 15000, retryMs = 3000) => {
       ),
       Effect.provideService(StripeClient, {} as StripeClient),
       Effect.provideService(LiveKitClient, {} as LiveKitClient),
+      Effect.provideService(ResendClient, {} as ResendClient),
       Effect.provide(NodeFileSystem.layer),
     ),
   );

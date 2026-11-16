@@ -34,6 +34,7 @@ import {
   StripeError,
   type CheckoutInput,
 } from "../../clients/stripe.js";
+import { ResendClient, type Email } from "../../clients/resend.js";
 import { PaymentConfig } from "./config.js";
 import { PaymentError } from "./errors.js";
 import {
@@ -306,6 +307,7 @@ describe("checkout", () => {
     });
     const ready = vi.fn(async () => {});
     const dial = vi.fn<(request: DialInput) => Promise<void>>(async () => {});
+    const send = vi.fn<(email: Email) => void>();
     const dialer = LiveKitClient.make({
       ready: Effect.tryPromise({
         try: () => ready(),
@@ -334,6 +336,12 @@ describe("checkout", () => {
         Effect.provideService(MongoClient, mongo as MongoClient),
         Effect.provideService(StripeClient, stripe),
         Effect.provideService(LiveKitClient, dialer),
+        Effect.provideService(
+          ResendClient,
+          ResendClient.make({
+            send: (email) => Effect.sync(() => send(email)),
+          }),
+        ),
         Effect.provideService(Preflight, Preflight.make({ check })),
         Effect.provideService(
           CallLimit,
@@ -350,11 +358,17 @@ describe("checkout", () => {
       check,
       ready,
       dial,
+      send,
       run: <A, E>(
         effect: Effect.Effect<
           A,
           E,
-          MongoClient | StripeClient | LiveKitClient | PaymentConfig | Preflight
+          | MongoClient
+          | StripeClient
+          | LiveKitClient
+          | ResendClient
+          | PaymentConfig
+          | Preflight
         >,
         overrides: Partial<Settings> = {},
       ) => Effect.runPromise(provide(effect, overrides)),
@@ -573,6 +587,19 @@ describe("checkout", () => {
       }
     });
     const h = { ...harness(mongo), mongo };
+    it("emails the owner once per request, not on retries", async () => {
+      const result = await h.run(
+        createCallRequest(input, "email", creationCredentials),
+      );
+      await h.run(createCallRequest(input, "email", creationCredentials));
+      await vi.waitFor(() =>
+        expect(h.send).toHaveBeenCalledWith({
+          subject: `Call requested: ${input.to}`,
+          html: expect.stringContaining(`>${result.call_id}</code>`),
+        }),
+      );
+      expect(h.send).toHaveBeenCalledTimes(1);
+    });
     it("creates a 60-minute Checkout despite creation latency and preserves its deadline on retry", async () => {
       const now = Date.now();
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);

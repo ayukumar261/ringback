@@ -18,6 +18,7 @@ import {
   StripeError,
   type CheckoutSession,
 } from "../../clients/stripe.js";
+import { callRequestedEmail, sendEmail } from "../../emails/calls.js";
 import { PaymentConfig } from "./config.js";
 import { PaymentError, logPaymentError } from "./errors.js";
 import { Preflight } from "../../preflight/preflight.js";
@@ -301,7 +302,7 @@ export const createCallRequest = (
         session.livemode !== (environment === "production")
       )
         return yield* new PaymentError({ code: "conflict" });
-      yield* Effect.tryPromise(() =>
+      const binding = yield* Effect.tryPromise(() =>
         mongo.requests.updateOne(
           { _id: requestId, checkout: { $exists: false } },
           {
@@ -332,6 +333,8 @@ export const createCallRequest = (
       // Recheck revocation/expiry if access changed while Checkout was being created.
       if (!retryAccessToken(bound, { accessToken: token }))
         return yield* new PaymentError({ code: "conflict" });
+      // Only the call that bound the session emails, so retries don't repeat it.
+      if (binding.modifiedCount) yield* sendEmail(callRequestedEmail(bound));
       return yield* callResponse(bound, settings, token);
     }).pipe(
       Effect.tapError((error) => logPaymentError("checkout", error)),

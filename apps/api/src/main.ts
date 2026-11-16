@@ -17,6 +17,7 @@ import { TwilioClient } from "./clients/twilio.js";
 import { Preflight } from "./preflight/preflight.js";
 import { CallLimit } from "./preflight/limit.js";
 import { ElevenLabsClient } from "./clients/elevenlabs.js";
+import { ResendClient } from "./clients/resend.js";
 import { ExpenseCollectorLive } from "./pipeline/collector.js";
 
 const ServerLive = NodeHttpServer.layerConfig(() => createServer(), {
@@ -75,6 +76,7 @@ const AppLive = Layer.mergeAll(
       CallFeed.Default,
       StripeClient.Default,
       ElevenLabsClient.Default,
+      ResendClient.Default,
     ),
   ),
 );

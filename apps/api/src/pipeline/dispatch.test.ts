@@ -16,6 +16,7 @@ import {
   type DialInput,
 } from "../clients/livekit.js";
 import { StripeClient } from "../clients/stripe.js";
+import { ResendClient, type Email } from "../clients/resend.js";
 import { PaymentConfig } from "../handlers/payments/config.js";
 import {
   hash,
@@ -185,6 +186,7 @@ const harness = (
 ) => {
   const ready = vi.fn(async () => {});
   const dial = vi.fn<(request: DialInput) => Promise<void>>(async () => {});
+  const send = vi.fn<(email: Email) => void>();
   const dialer = LiveKitClient.make({
     ready: Effect.promise(() => ready()),
     dial: (request) =>
@@ -214,6 +216,10 @@ const harness = (
       Effect.provideService(MongoClient, mongo as MongoClient),
       Effect.provideService(RedisClient, redis as RedisClient),
       Effect.provideService(LiveKitClient, dialer),
+      Effect.provideService(
+        ResendClient,
+        ResendClient.make({ send: (email) => Effect.sync(() => send(email)) }),
+      ),
       Effect.provideService(Preflight, Preflight.make({ check })),
       Effect.provideService(
         CallLimit,
@@ -228,6 +234,7 @@ const harness = (
     check,
     ready,
     dial,
+    send,
     provide,
     run: <A, E>(
       effect: Effect.Effect<
@@ -236,6 +243,7 @@ const harness = (
         | MongoClient
         | RedisClient
         | LiveKitClient
+        | ResendClient
         | PaymentConfig
         | Preflight
         | CallLimit
@@ -270,6 +278,14 @@ describe("paid dispatch", () => {
         { _id: "request-test", status: "dialing" },
         { $set: { status: "dialed", dialedAt: expect.any(Date) } },
       );
+      await vi.waitFor(() =>
+        expect(h.send).toHaveBeenCalledWith({
+          subject: "Call dialed: +15551234567",
+          html: expect.stringContaining(
+            amountTotal < 50 ? "with a coupon" : "$0.50</li>",
+          ),
+        }),
+      );
     },
   );
   it("rejects a discounted purchase with the wrong original price", async () => {
@@ -290,6 +306,7 @@ describe("paid dispatch", () => {
     const h = harness(mongo);
     await h.run(dispatchCall);
     expect(h.dial).not.toHaveBeenCalled();
+    expect(h.send).not.toHaveBeenCalled();
   });
   it("reserves and completes a free call in Redis", async () => {
     const mongo = fakeMongo();

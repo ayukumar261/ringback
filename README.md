@@ -236,6 +236,7 @@ The worker listens on `127.0.0.1:8080` by default. Set `WORKER_HTTP_ADDR` if it 
 | `RINGBACK_CALL_PRICE_CENTS`, `RINGBACK_CALL_CURRENCY`           | API         | Price of one call; defaults to `50` and `usd`                                                       |
 | `RINGBACK_PRODUCT_TAX_CODE`                                     | API         | Managed Payments product category; defaults to `txcd_10105001` (cloud AI services for personal use) |
 | `RINGBACK_PUBLIC_API_URL`, `RINGBACK_PUBLIC_WEB_URL`            | API         | Public addresses used in call links; default to `http://localhost:3001` and `http://localhost:3000` |
+| `RESEND_API_KEY`, `RESEND_TO`                                   | API         | Emails `RESEND_TO` when a call is requested and when it dials; unset logs `email: send failed`      |
 | `AUDIO_DIR`                                                     | Worker, API | Unset disables recording and audio serving; both services must access the same files                |
 | `WORKER_HTTP_ADDR`                                              | Worker      | `127.0.0.1:8080`                                                                                    |
 | `PORT`                                                          | API         | `3001`                                                                                              |
